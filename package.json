@@ -1,0 +1,54 @@
+{
+  "name": "relicxs-workers",
+  "version": "0.1.0",
+  "description": "Relicxs background workers",
+  "main": "src/index.js",
+  "scripts": {
+    "check": "node src/index.js",
+    "dev": "NODE_ENV=development node src/index.js",
+
+    "pm2:start": "pm2 start pm2/ecosystem.config.js",
+    "pm2:stop": "pm2 stop all",
+    "pm2:restart": "pm2 restart pm2/ecosystem.config.js",
+    "pm2:logs": "pm2 logs",
+
+    "start": "npm run check && npm run pm2:start",
+    "migrate:queues": "node scripts/migrate-queues.js"
+  },
+  "keywords": [],
+  "author": "iconicxs",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "module-alias": "^2.2.3",
+    "@supabase/supabase-js": "^2.47.10",
+    "dotenv": "^16.4.5",
+    "fs-extra": "^11.2.0",
+    "p-limit": "^2.3.0",
+    "openai": "^4.67.3",
+    "pino": "^9.5.0",
+    "redis": "^4.6.14",
+    "archiver": "^6.0.2",
+    "tar": "^6.2.0",
+    "sharp": "^0.32.4",
+    "@aws-sdk/client-s3": "^4.0.0",
+    "node-fetch": "^2.6.14",
+    "prom-client": "^15.1.3",
+    "backblaze-b2": "^2.5.0",
+    "pm2": "^5.4.2"
+  },
+  "_moduleAliases": {
+    "@core": "src/core",
+    "@config": "src/core/config",
+    "@startup": "src/startup",
+    "@resilience": "src/resilience",
+    "@observability": "src/observability",
+    "@machinist": "src/workers/machinist",
+    "@archivist": "src/workers/archivist",
+    "@events": "src/events",
+    "@logs": "src/logs",
+    "@security": "src/security",
+    "@errors": "src/errors",
+    "@schema": "src/schema",
+    "@safety": "src/safety"
+  }
+}

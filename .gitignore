@@ -1,0 +1,17 @@
+# Node
+node_modules/
+npm-debug.log
+.env
+
+# PM2
+.pm2/
+
+# Logs
+logs/
+*.log
+
+# TODO: Implementation will be added in Phase 2
+
+# Local test assets (keep README only)
+test/assets/*
+!test/assets/README.md
