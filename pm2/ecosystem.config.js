@@ -9,7 +9,8 @@ module.exports = {
       watch: false,
       max_memory_restart: '800M',
       time: true,
-      env: { NODE_ENV: 'production' }
+      env: { NODE_ENV: 'production' },
+      env_production: { NODE_ENV: 'production' }
     },
     {
       name: 'archivist-worker',
@@ -20,7 +21,8 @@ module.exports = {
       watch: false,
       max_memory_restart: '800M',
       time: true,
-      env: { NODE_ENV: 'production' }
+      env: { NODE_ENV: 'production' },
+      env_production: { NODE_ENV: 'production' }
     },
     {
       name: 'health-server',
@@ -31,7 +33,8 @@ module.exports = {
       watch: false,
       max_memory_restart: '200M',
       time: true,
-      env: { NODE_ENV: 'production', HEALTH_PORT: 8081, MINIMAL_MODE: 'false' }
+      env: { NODE_ENV: 'production', HEALTH_PORT: 8081, MINIMAL_MODE: 'false' },
+      env_production: { NODE_ENV: 'production', HEALTH_PORT: 8081, MINIMAL_MODE: 'false' }
     }
   ]
 };
