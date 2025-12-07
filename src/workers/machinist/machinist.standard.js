@@ -68,6 +68,7 @@ async function processStandardMachinistJob(logger, job) {
     }
     let ext = sanitizeExt((job.original_extension || job.extension || job.input_extension || ''));
     // If extension not provided, attempt to fetch from Supabase asset.storage_path
+    let assetStoragePath = null;
     if (!ext) {
       try {
         const { supabase } = require('../../core/supabase');
@@ -77,6 +78,7 @@ async function processStandardMachinistJob(logger, job) {
           .eq('id', job.asset_id)
           .single();
         const p = assetRow && assetRow.storage_path ? String(assetRow.storage_path) : '';
+        if (p) assetStoragePath = p;
         const m = p.match(/\.([A-Za-z0-9]+)$/);
         if (m && m[1]) {
           const guessed = sanitizeExt(m[1]);
@@ -92,13 +94,16 @@ async function processStandardMachinistJob(logger, job) {
     }
     let inputLocalPath = null;
     let downloaded = false;
-    for (const e of extCandidates) {
-      const landingPath = path.posix.join(`tenant-${tenantId}`, `batch-${batchId}`, `asset-${assetId}`, `original.${e}`);
-      const localPath = path.join(workDir, `original.${e}`);
+    // Prefer using storage_path when available (authoritative)
+    if (assetStoragePath) {
       try {
+        const sp = String(assetStoragePath);
+        const extMatch = sp.match(/\.([A-Za-z0-9]+)$/);
+        const e = extMatch && extMatch[1] ? sanitizeExt(extMatch[1]) : (ext || 'jpg');
+        const localPath = path.join(workDir, `original.${e || 'jpg'}`);
         await wrap(
           () => withRetry(
-            () => downloadFile(config.b2.landingBucketId || config.b2.processedStandardBucketId, landingPath, localPath),
+            () => downloadFile(config.b2.landingBucketId || config.b2.processedStandardBucketId, sp, localPath),
             { logger, maxRetries: 2, baseDelay: 500, context: { step: 'download-original' } }
           ),
           logger,
@@ -107,10 +112,31 @@ async function processStandardMachinistJob(logger, job) {
         ext = e;
         inputLocalPath = localPath;
         downloaded = true;
-        break;
-      } catch (e1) {
-        // try next extension
-        continue;
+      } catch (_) {
+        // fall through to constructed paths
+      }
+    }
+    // Fallback: try common constructed paths by extension
+    if (!downloaded) {
+      for (const e of extCandidates) {
+        const landingPath = path.posix.join(`tenant-${tenantId}`, `batch-${batchId}`, `asset-${assetId}`, `original.${e}`);
+        const localPath = path.join(workDir, `original.${e}`);
+        try {
+          await wrap(
+            () => withRetry(
+              () => downloadFile(config.b2.landingBucketId || config.b2.processedStandardBucketId, landingPath, localPath),
+              { logger, maxRetries: 2, baseDelay: 500, context: { step: 'download-original' } }
+            ),
+            logger,
+            { step: 'download-original' }
+          );
+          ext = e;
+          inputLocalPath = localPath;
+          downloaded = true;
+          break;
+        } catch (e1) {
+          continue;
+        }
       }
     }
     if (!downloaded) {
