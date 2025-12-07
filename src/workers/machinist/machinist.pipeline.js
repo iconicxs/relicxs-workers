@@ -129,10 +129,7 @@ async function runMachinistPipeline(logger, job) {
     }
     // Attach EXIF-derived fallbacks for downstream upload recording
     try { job._exifBitDepth = _exifBitDepth; job._exifColorSpace = _exifColorSpace; job._exifMimeType = _exifMimeType; } catch (_) {}
-    const metaPathLocal = path.join(workDir, 'metadata.json');
-    await fse.writeJson(metaPathLocal, exif, { spaces: 2 });
-    const metaRemote = path.posix.join('standard', `tenant-${tenantId}`, `asset-${assetId}`, 'metadata', 'metadata.json');
-    await wrap(() => withRetry(() => uploadMetadata({ logger, job, bucketId: config.b2.processedStandardBucketId, remotePath: metaRemote, localPath: metaPathLocal }), { logger, maxRetries: 2, baseDelay: 500, context: { step: 'upload-metadata' } }), logger, { step: 'upload-metadata' });
+    // We will attach merged metadata later and upload only manifest.json to files bucket
 
     // Phase 2: merged manifest.json (EXIF + AI)
     try {
@@ -150,20 +147,36 @@ async function runMachinistPipeline(logger, job) {
         'manifest.json'
       );
 
-      await wrap(
-        () => withRetry(
-          () => uploadMetadata({
-            logger,
-            job,
-            bucketId: config.b2.processedStandardBucketId,
-            remotePath: manifestRemote,
-            localPath: manifestLocal
-          }),
-          { logger, maxRetries: 2, baseDelay: 500, context: { step: 'upload-merged-manifest' } }
-        ),
-        logger,
-        { step: 'upload-merged-manifest' }
-      );
+      // Upload manifest.json to files bucket and attach to ORIGINAL row
+      const fs = require('fs');
+      const crypto = require('crypto');
+      const buf = fs.readFileSync(manifestLocal);
+      const checksum = crypto.createHash('sha256').update(buf).digest('hex');
+      const filesBucket = config.b2.filesBucketId || config.b2.processedStandardBucketId;
+      const filesRemote = path.posix.join('files', `tenant-${tenantId}`, `asset-${assetId}`, 'metadata', 'manifest.json');
+      await wrap(() => withRetry(() => require('../../core/storage').uploadFile(filesBucket, filesRemote, manifestLocal, 'application/json'), { logger, maxRetries: 2, baseDelay: 500, context: { step: 'upload-merged-manifest' } }), logger, { step: 'upload-merged-manifest' });
+
+      const { supabase } = require('../../core/supabase');
+      const pv = (job.file_purpose || 'viewing').toLowerCase();
+      const { data: existing } = await supabase
+        .from('asset_versions')
+        .select('id')
+        .eq('asset_id', job.asset_id)
+        .eq('purpose', pv)
+        .eq('variant', 'original')
+        .limit(1)
+        .maybeSingle();
+      if (existing && existing.id) {
+        await supabase.from('asset_versions').update({
+          metadata: merged,
+          metadata_storage_path: filesRemote,
+          metadata_checksum: checksum,
+          metadata_bucket_name: 'B2_files_bucket',
+          updated_at: new Date().toISOString(),
+        }).eq('id', existing.id);
+      } else {
+        logger.warn('[MACHINIST][PIPELINE] original version not found for metadata attach');
+      }
     } catch (mErr) {
       logger.warn({ err: mErr }, '[MACHINIST] Failed to create/upload merged manifest');
     }

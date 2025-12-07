@@ -215,14 +215,4 @@ async function fileExists(bucketId, remotePath) {
 }
 
 async function archiveToGlacier(remotePath, localPath) {
-  return withRetry(async () => {
-    return uploadToS3(config.aws.archiveBucket, remotePath, localPath);
-  }, { maxRetries: 3, baseDelay: 300 });
-}
-
-module.exports = {
-  uploadFile,
-  downloadFile,
-  fileExists,
-  archiveToGlacier,
-};
+  return withRetry(async () 

@@ -18,6 +18,7 @@ const {
   detectMime,
 } = require('./machinist.utils');
 const { normalizeFilename, enforceResolution, normalizeExif } = require('./machinist.consistency');
+const { extractExifMetadata } = require('./machinist.exif');
 const sharp = require('sharp');
 
 const { generateDerivatives } = require('./machinist.sharp');
@@ -85,6 +86,17 @@ async function processStandardMachinistJob(logger, job) {
     if (!det || !det.mime) throw new Error('UNSUPPORTED_MIME');
     const meta = await sharp(fileBuf).metadata();
     enforceResolution(meta.width, meta.height);
+
+    // Extract EXIF (normalized)
+    let exifNormalized = {};
+    try {
+      const rawExif = await extractExifMetadata(inputLocalPath);
+      exifNormalized = normalizeExif(rawExif);
+      // Attach for downstream fallbacks
+      try { job._exifBitDepth = job._exifBitDepth || null; } catch (_) {}
+    } catch (e) {
+      logger.warn({ err: e }, '[MACHINIST][STANDARD] EXIF extraction failed');
+    }
 
     // 2a) Upload ORIGINAL into processed storage FIRST (fatal if this fails)
     //     This guarantees the source is preserved before any derivative work.
@@ -248,33 +260,54 @@ async function processStandardMachinistJob(logger, job) {
       }
     }
 
-    // Optional: future AI metadata support when standard pipeline produces AI data
+    // Attach merged metadata to ORIGINAL record and upload manifest.json to files bucket
     try {
-      const exifBlock = {}; // No EXIF here; upstream pipeline handles extraction
       const aiBlock = job.ai_metadata || null;
-
-      const merged = await mergeMetadata({ exif: exifBlock, ai: aiBlock, job });
-
+      const merged = await mergeMetadata({ exif: exifNormalized, ai: aiBlock, job });
       const manifestLocal = path.join(workDir, 'manifest.json');
       await fse.writeJson(manifestLocal, merged, { spaces: 2 });
 
+      // Compute checksum
+      const fs = require('fs');
+      const crypto = require('crypto');
+      const buf = fs.readFileSync(manifestLocal);
+      const checksum = crypto.createHash('sha256').update(buf).digest('hex');
+
+      // Prefer files bucket
+      const filesBucket = config.b2.filesBucketId || config.b2.processedStandardBucketId;
       const manifestRemote = path.posix.join(
-        'standard',
+        'files',
         `tenant-${tenantId}`,
         `asset-${assetId}`,
         'metadata',
         'manifest.json'
       );
+      await require('../../core/storage').uploadFile(filesBucket, manifestRemote, manifestLocal, 'application/json');
 
-      await uploadMetadata({
-        logger,
-        job,
-        bucketId: config.b2.processedStandardBucketId,
-        remotePath: manifestRemote,
-        localPath: manifestLocal,
-      });
+      // Upsert attachment into ORIGINAL version row
+      const { supabase } = require('../../core/supabase');
+      const pv = (job.file_purpose || 'viewing').toLowerCase();
+      const { data: existing } = await supabase
+        .from('asset_versions')
+        .select('id')
+        .eq('asset_id', job.asset_id)
+        .eq('purpose', pv)
+        .eq('variant', 'original')
+        .limit(1)
+        .maybeSingle();
+      if (existing && existing.id) {
+        await supabase.from('asset_versions').update({
+          metadata: merged,
+          metadata_storage_path: manifestRemote,
+          metadata_checksum: checksum,
+          metadata_bucket_name: 'B2_files_bucket',
+          updated_at: new Date().toISOString(),
+        }).eq('id', existing.id);
+      } else {
+        logger.warn('[MACHINIST][STANDARD] original version not found for metadata attach');
+      }
     } catch (err) {
-      logger.warn({ err }, '[MACHINIST][STANDARD] failed to build merged manifest');
+      logger.warn({ err }, '[MACHINIST][STANDARD] failed to attach/upload metadata');
     }
 
     const result = { status: 'complete' };
