@@ -79,7 +79,9 @@ async function uploadToB2(bucketId, remotePath, localPath, mimeOverride) {
   const b2 = getB2();
 
   const stat = fs.statSync(localPath);
-  const stream = fs.createReadStream(localPath);
+  // backblaze-b2 library expects Buffer/string to compute sha1 internally; ReadStream triggers ERR_INVALID_ARG_TYPE
+  // Use Buffer for compatibility. For very large files, consider a large-file upload path.
+  const dataBuf = fs.readFileSync(localPath);
   const contentType = detectMimeType(localPath, mimeOverride);
   const fileName = normalizeKey(remotePath);
 
@@ -90,7 +92,7 @@ async function uploadToB2(bucketId, remotePath, localPath, mimeOverride) {
     uploadUrl: uploadUrlData.uploadUrl,
     uploadAuthToken: uploadUrlData.authorizationToken,
     fileName,
-    data: stream,
+    data: dataBuf,
     contentType,
     contentLength: stat.size,
   });

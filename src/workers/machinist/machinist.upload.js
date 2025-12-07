@@ -175,6 +175,7 @@ async function uploadToB2({ buffer, path, mime }) {
 }
 
 module.exports = {
+  uploadAndRecord,
   uploadToB2,
   uploadAndRecordPreservation,
   uploadAndRecordViewing,
