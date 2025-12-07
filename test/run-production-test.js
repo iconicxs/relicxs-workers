@@ -23,7 +23,8 @@ const { expectAssetVersions } = require('./validate-db');
   await redis.connect();
 
   const job = buildMachinistJob({ ids, purpose: 'production', ext });
-  await redis.rPush('image-processing:jobs', JSON.stringify(job));
+  const { MACHINIST_QUEUE_STANDARD } = require('../src/priorities/priority.constants');
+  await redis.rPush(MACHINIST_QUEUE_STANDARD, JSON.stringify(job));
 
   const deadline = Date.now() + 120000;
   let passed = false;
