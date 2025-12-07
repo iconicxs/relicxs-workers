@@ -317,6 +317,50 @@ const server = http.createServer(async (req, res) => {
     }
     return;
   }
+  // Admin PM2 list endpoint (requires ADMIN_API_TOKEN)
+  // GET /admin/pm2/list -> returns array of processes with minimal fields
+  if (req.method === 'GET' && req.url === '/admin/pm2/list') {
+    try {
+      const adminToken = process.env.ADMIN_API_TOKEN;
+      if (!adminToken) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'admin API not enabled' }));
+        return;
+      }
+      const auth = req.headers.authorization || '';
+      if (!auth.startsWith('Bearer ') || auth.slice(7) !== adminToken) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'forbidden' }));
+        return;
+      }
+
+      try {
+        const { stdout } = await execp('pm2 jlist');
+        let list = [];
+        try { list = JSON.parse(stdout || '[]'); } catch { list = []; }
+        const mapped = list.map((p) => ({
+          id: p.pm_id,
+          name: p.name,
+          pid: p.pid,
+          status: p.pm2_env && p.pm2_env.status,
+          restarts: p.pm2_env && p.pm2_env.restart_time,
+          uptime: p.pm2_env && p.pm2_env.pm_uptime,
+          cpu: p.monit && p.monit.cpu,
+          memory: p.monit && p.monit.memory,
+          version: p.pm2_env && p.pm2_env.version,
+        }));
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ processes: mapped }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'pm2_list_failed', message: err.message }));
+      }
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
   if (req.method === 'GET' && req.url === '/metrics') {
     try {
       const metrics = await registry.metrics();
