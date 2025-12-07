@@ -281,43 +281,6 @@ const server = http.createServer(async (req, res) => {
     }
     return;
   }
-  // Ops: PM2 process list (token required)
-  if (req.method === 'GET' && req.url === '/ops/pm2/list') {
-    if (!isAuthorized(req)) {
-      res.writeHead(401, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ error: 'unauthorized' }));
-    }
-    try {
-      // Prefer programmatic API if available, else fallback to pm2 jlist
-      let out = null;
-      try {
-        const pm2 = require('pm2');
-        out = await new Promise((resolve, reject) => {
-          pm2.connect((err) => {
-            if (err) return reject(err);
-            pm2.list((e, list) => {
-              pm2.disconnect();
-              if (e) return reject(e);
-              resolve(list);
-            });
-          });
-        });
-      } catch (_) {
-        const { exec } = require('child_process');
-        out = await new Promise((resolve, reject) => {
-          exec('pm2 jlist', { timeout: 2000 }, (err, stdout) => {
-            if (err) return reject(err);
-            try { resolve(JSON.parse(stdout)); } catch (e) { resolve({ raw: stdout }); }
-          });
-        });
-      }
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ processes: out }));
-    } catch (err) {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ error: err.message }));
-    }
-  }
   res.writeHead(404);
   res.end();
 });

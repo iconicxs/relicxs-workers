@@ -33,23 +33,11 @@ async function getWorkerHealth() {
   const cpus = os.cpus().length;
   const load = os.loadavg()[0];
   const cpuPercent = Math.round((load / cpus) * 100 * 100) / 100;
-  const totalMem = os.totalmem();
-  const freeMem = os.freemem();
-  const usedMem = totalMem - freeMem;
 
   return {
     redis_connected: redisConnected,
     queue_depths: queueDepths,
-    memory: {
-      rss: mem.rss,
-      heapUsed: mem.heapUsed,
-      heapTotal: mem.heapTotal,
-      system: {
-        total: totalMem,
-        free: freeMem,
-        used: usedMem,
-      },
-    },
+    memory: { rss: mem.rss, heapUsed: mem.heapUsed, heapTotal: mem.heapTotal },
     cpu_load: cpuPercent,
     uptime: Math.round(process.uptime()),
   };
