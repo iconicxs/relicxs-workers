@@ -66,20 +66,39 @@ async function processStandardMachinistJob(logger, job) {
     if (job.input_extension && !sanitizeExt(job.input_extension)) {
       throw new Error('[MACHINIST][STANDARD] Unsafe or unsupported input_extension');
     }
-    let ext = sanitizeExt((job.original_extension || job.extension || job.input_extension || 'jpg'));
-    if (!ext) throw new Error('[MACHINIST][STANDARD] Unsafe or unsupported extension');
-
-    // Download from landing bucket root (no extra 'landing/' prefix)
-    const landingPath = path.posix.join(`tenant-${tenantId}`, `batch-${batchId}`, `asset-${assetId}`, `original.${ext}`);
-    const inputLocalPath = path.join(workDir, `original.${ext}`);
-    await wrap(
-      () => withRetry(
-        () => downloadFile(config.b2.landingBucketId || config.b2.processedStandardBucketId, landingPath, inputLocalPath),
-        { logger, maxRetries: 2, baseDelay: 500, context: { step: 'download-original' } }
-      ),
-      logger,
-      { step: 'download-original' }
-    );
+    let ext = sanitizeExt((job.original_extension || job.extension || job.input_extension || ''));
+    // Candidate extensions to try when not provided
+    const extCandidates = [];
+    if (ext) extCandidates.push(ext);
+    for (const e of ['tif', 'tiff', 'jpg', 'jpeg', 'png']) {
+      if (!extCandidates.includes(e)) extCandidates.push(e);
+    }
+    let inputLocalPath = null;
+    let downloaded = false;
+    for (const e of extCandidates) {
+      const landingPath = path.posix.join(`tenant-${tenantId}`, `batch-${batchId}`, `asset-${assetId}`, `original.${e}`);
+      const localPath = path.join(workDir, `original.${e}`);
+      try {
+        await wrap(
+          () => withRetry(
+            () => downloadFile(config.b2.landingBucketId || config.b2.processedStandardBucketId, landingPath, localPath),
+            { logger, maxRetries: 2, baseDelay: 500, context: { step: 'download-original' } }
+          ),
+          logger,
+          { step: 'download-original' }
+        );
+        ext = e;
+        inputLocalPath = localPath;
+        downloaded = true;
+        break;
+      } catch (e1) {
+        // try next extension
+        continue;
+      }
+    }
+    if (!downloaded) {
+      throw new Error('[MACHINIST][STANDARD] Failed to download original with any known extension');
+    }
 
     const fileBuf = fs.readFileSync(inputLocalPath);
     await validateImageBuffer(fileBuf);
