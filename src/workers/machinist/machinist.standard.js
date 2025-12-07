@@ -86,68 +86,81 @@ async function processStandardMachinistJob(logger, job) {
     const meta = await sharp(fileBuf).metadata();
     enforceResolution(meta.width, meta.height);
 
-    // 2a) Upload ORIGINAL into processed storage so it is preserved beyond landing lifecycle
-    try {
+    // 2a) Upload ORIGINAL into processed storage FIRST (fatal if this fails)
+    //     This guarantees the source is preserved before any derivative work.
+    {
       const purpose = (job.file_purpose || 'viewing').toLowerCase();
       const uploadAndRecord = require('./machinist.upload').uploadAndRecord;
       if (!uploadAndRecord) throw new Error('uploadAndRecord missing');
       const fileName = `original.${ext}`;
+      const { fileExists } = require('../../core/storage');
+      let origRemote = null;
       if (purpose === 'preservation') {
-        const origRemote = path.posix.join(
+        origRemote = path.posix.join(
           'standard',
           `tenant-${tenantId}`,
           `asset-${assetId}`,
           'preservation',
           fileName
         );
-        await wrap(
-          () => withRetry(
-            () => uploadAndRecord({
-              logger,
-              job,
-              bucketId: config.b2.processedArchiveBucketId || config.b2.processedStandardBucketId,
-              remotePath: origRemote,
-              localPath: inputLocalPath,
-              contentType: 'application/octet-stream',
-              versionType: 'preservation',
-              purpose: 'preservation',
-              variant: 'original',
-            }),
-            { logger, maxRetries: 2, baseDelay: 500, context: { step: 'upload-original-preservation' } }
-          ),
-          logger,
-          { step: 'upload-original-preservation' }
-        );
+        const bucketId = config.b2.processedArchiveBucketId || config.b2.processedStandardBucketId;
+        // Idempotency: skip if exists
+        const exists = await fileExists(bucketId, origRemote).catch(() => false);
+        if (!exists) {
+          await wrap(
+            () => withRetry(
+              () => uploadAndRecord({
+                logger,
+                job,
+                bucketId,
+                remotePath: origRemote,
+                localPath: inputLocalPath,
+                contentType: 'application/octet-stream',
+                versionType: 'preservation',
+                purpose: 'preservation',
+                variant: 'original',
+              }),
+              { logger, maxRetries: 2, baseDelay: 500, context: { step: 'upload-original-preservation' } }
+            ),
+            logger,
+            { step: 'upload-original-preservation' }
+          );
+        } else {
+          logger.info({ origRemote }, '[MACHINIST][STANDARD] Original already exists (preservation); skipping upload');
+        }
       } else if (purpose === 'viewing' || purpose === 'production' || purpose === 'restoration') {
-        const origRemote = path.posix.join(
+        origRemote = path.posix.join(
           'standard',
           `tenant-${tenantId}`,
           `asset-${assetId}`,
           purpose,
           fileName
         );
-        await wrap(
-          () => withRetry(
-            () => uploadAndRecord({
-              logger,
-              job,
-              bucketId: config.b2.processedStandardBucketId,
-              remotePath: origRemote,
-              localPath: inputLocalPath,
-              contentType: 'application/octet-stream',
-              versionType: purpose,
-              purpose,
-              variant: 'original',
-            }),
-            { logger, maxRetries: 2, baseDelay: 500, context: { step: 'upload-original' } }
-          ),
-          logger,
-          { step: 'upload-original' }
-        );
+        const bucketId = config.b2.processedStandardBucketId;
+        const exists = await fileExists(bucketId, origRemote).catch(() => false);
+        if (!exists) {
+          await wrap(
+            () => withRetry(
+              () => uploadAndRecord({
+                logger,
+                job,
+                bucketId,
+                remotePath: origRemote,
+                localPath: inputLocalPath,
+                contentType: 'application/octet-stream',
+                versionType: purpose,
+                purpose,
+                variant: 'original',
+              }),
+              { logger, maxRetries: 2, baseDelay: 500, context: { step: 'upload-original' } }
+            ),
+            logger,
+            { step: 'upload-original' }
+          );
+        } else {
+          logger.info({ origRemote }, '[MACHINIST][STANDARD] Original already exists; skipping upload');
+        }
       }
-    } catch (e) {
-      logger.warn({ err: e }, '[MACHINIST][STANDARD] Original upload step failed (continuing)');
-      try { await sendToDLQ(job, 'original_upload_failed:' + (e?.message || String(e)), logger); } catch (_) {}
     }
 
     // 2) Generate derivatives
