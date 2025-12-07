@@ -284,8 +284,4 @@ async function runMachinistPipeline(logger, job) {
     // Create failed records for versions if needed (best-effort)
     // (uploadAndRecord functions already create failed records on upload failure)
 
-    throw err;
-  }
-}
-
-module.exports = { runMachinistPipeline };
+    th

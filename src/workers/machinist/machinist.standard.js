@@ -86,6 +86,70 @@ async function processStandardMachinistJob(logger, job) {
     const meta = await sharp(fileBuf).metadata();
     enforceResolution(meta.width, meta.height);
 
+    // 2a) Upload ORIGINAL into processed storage so it is preserved beyond landing lifecycle
+    try {
+      const purpose = (job.file_purpose || 'viewing').toLowerCase();
+      const uploadAndRecord = require('./machinist.upload').uploadAndRecord;
+      if (!uploadAndRecord) throw new Error('uploadAndRecord missing');
+      const fileName = `original.${ext}`;
+      if (purpose === 'preservation') {
+        const origRemote = path.posix.join(
+          'standard',
+          `tenant-${tenantId}`,
+          `asset-${assetId}`,
+          'preservation',
+          fileName
+        );
+        await wrap(
+          () => withRetry(
+            () => uploadAndRecord({
+              logger,
+              job,
+              bucketId: config.b2.processedArchiveBucketId || config.b2.processedStandardBucketId,
+              remotePath: origRemote,
+              localPath: inputLocalPath,
+              contentType: 'application/octet-stream',
+              versionType: 'preservation',
+              purpose: 'preservation',
+              variant: 'original',
+            }),
+            { logger, maxRetries: 2, baseDelay: 500, context: { step: 'upload-original-preservation' } }
+          ),
+          logger,
+          { step: 'upload-original-preservation' }
+        );
+      } else if (purpose === 'viewing' || purpose === 'production' || purpose === 'restoration') {
+        const origRemote = path.posix.join(
+          'standard',
+          `tenant-${tenantId}`,
+          `asset-${assetId}`,
+          purpose,
+          fileName
+        );
+        await wrap(
+          () => withRetry(
+            () => uploadAndRecord({
+              logger,
+              job,
+              bucketId: config.b2.processedStandardBucketId,
+              remotePath: origRemote,
+              localPath: inputLocalPath,
+              contentType: 'application/octet-stream',
+              versionType: purpose,
+              purpose,
+              variant: 'original',
+            }),
+            { logger, maxRetries: 2, baseDelay: 500, context: { step: 'upload-original' } }
+          ),
+          logger,
+          { step: 'upload-original' }
+        );
+      }
+    } catch (e) {
+      logger.warn({ err: e }, '[MACHINIST][STANDARD] Original upload step failed (continuing)');
+      try { await sendToDLQ(job, 'original_upload_failed:' + (e?.message || String(e)), logger); } catch (_) {}
+    }
+
     // 2) Generate derivatives
     const derivatives = await wrap(
       () => withRetry(
