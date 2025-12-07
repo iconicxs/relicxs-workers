@@ -27,12 +27,17 @@ if [[ -f "$ROOT_DIR/.env" ]]; then
   fi
 fi
 
-# Read WORKER_ENQUEUE_TOKEN locally (if present) so we can sync it to remote
+# Read WORKER_ENQUEUE_TOKEN and ADMIN_API_TOKEN locally (if present) so we can sync them to remote
 if [[ -f "$ROOT_DIR/.env" ]]; then
   WORKER_ENQUEUE_TOKEN_RAW=$(cat "$ROOT_DIR/.env" | grep -E '^WORKER_ENQUEUE_TOKEN=' | tail -n 1 | sed -E 's/^WORKER_ENQUEUE_TOKEN=//') || true
   if [[ -n "$WORKER_ENQUEUE_TOKEN_RAW" ]]; then
     WORKER_ENQUEUE_TOKEN=${WORKER_ENQUEUE_TOKEN_RAW%"}; WORKER_ENQUEUE_TOKEN=${WORKER_ENQUEUE_TOKEN#"}
     WORKER_ENQUEUE_TOKEN=${WORKER_ENQUEUE_TOKEN%\'}; WORKER_ENQUEUE_TOKEN=${WORKER_ENQUEUE_TOKEN#\'}
+  fi
+  ADMIN_API_TOKEN_RAW=$(cat "$ROOT_DIR/.env" | grep -E '^ADMIN_API_TOKEN=' | tail -n 1 | sed -E 's/^ADMIN_API_TOKEN=//') || true
+  if [[ -n "$ADMIN_API_TOKEN_RAW" ]]; then
+    ADMIN_API_TOKEN=${ADMIN_API_TOKEN_RAW%"}; ADMIN_API_TOKEN=${ADMIN_API_TOKEN#"}
+    ADMIN_API_TOKEN=${ADMIN_API_TOKEN%\'}; ADMIN_API_TOKEN=${ADMIN_API_TOKEN#\'}
   fi
 fi
 
@@ -43,7 +48,7 @@ fi
 
 read -r -d '' REMOTE_PATH_SCRIPT <<'REMOTE_SCRIPT'
 set -euo pipefail
-# If the deploy command provided WORKER_ENQUEUE_TOKEN via environment, ensure the remote .env contains a proper line
+# If the deploy command provided WORKER_ENQUEUE_TOKEN / ADMIN_API_TOKEN via environment, ensure the remote .env contains proper lines
 if [[ -n "${WORKER_ENQUEUE_TOKEN:-}" ]]; then
   # If .env exists, attempt to remove any broken/embedded token fragments and append a clean line
   if [[ -f .env ]]; then
@@ -52,6 +57,16 @@ if [[ -n "${WORKER_ENQUEUE_TOKEN:-}" ]]; then
     mv .env.tmp .env
   else
     printf "WORKER_ENQUEUE_TOKEN=%s\n" "${WORKER_ENQUEUE_TOKEN}" > .env
+  fi
+  chmod 600 .env || true
+fi
+if [[ -n "${ADMIN_API_TOKEN:-}" ]]; then
+  if [[ -f .env ]]; then
+    sed -E 's/ADMIN_API_TOKEN=[^[:space:]]+//g' .env > .env.tmp || cp .env .env.tmp
+    printf "\nADMIN_API_TOKEN=%s\n" "${ADMIN_API_TOKEN}" >> .env.tmp
+    mv .env.tmp .env
+  else
+    printf "ADMIN_API_TOKEN=%s\n" "${ADMIN_API_TOKEN}" > .env
   fi
   chmod 600 .env || true
 fi
@@ -116,14 +131,14 @@ if [[ -n "${DO_SSH_OPTS:-}" ]]; then
 fi
 
 if [[ -n "${DO_WORKDIR:-}" ]]; then
-  if [[ -n "${WORKER_ENQUEUE_TOKEN:-}" ]]; then
-    "${SSH_BASE[@]}" "$DO_SSH" "WORKER_ENQUEUE_TOKEN='${WORKER_ENQUEUE_TOKEN}' DO_WORKDIR='$DO_WORKDIR' bash -s" <<< "$REMOTE_PATH_SCRIPT"
+  if [[ -n "${WORKER_ENQUEUE_TOKEN:-}" || -n "${ADMIN_API_TOKEN:-}" ]]; then
+    "${SSH_BASE[@]}" "$DO_SSH" "WORKER_ENQUEUE_TOKEN='${WORKER_ENQUEUE_TOKEN:-}' ADMIN_API_TOKEN='${ADMIN_API_TOKEN:-}' DO_WORKDIR='$DO_WORKDIR' bash -s" <<< "$REMOTE_PATH_SCRIPT"
   else
     "${SSH_BASE[@]}" "$DO_SSH" "DO_WORKDIR='$DO_WORKDIR' bash -s" <<< "$REMOTE_PATH_SCRIPT"
   fi
 else
-  if [[ -n "${WORKER_ENQUEUE_TOKEN:-}" ]]; then
-    "${SSH_BASE[@]}" "$DO_SSH" "WORKER_ENQUEUE_TOKEN='${WORKER_ENQUEUE_TOKEN}' bash -s" <<< "$REMOTE_PATH_SCRIPT"
+  if [[ -n "${WORKER_ENQUEUE_TOKEN:-}" || -n "${ADMIN_API_TOKEN:-}" ]]; then
+    "${SSH_BASE[@]}" "$DO_SSH" "WORKER_ENQUEUE_TOKEN='${WORKER_ENQUEUE_TOKEN:-}' ADMIN_API_TOKEN='${ADMIN_API_TOKEN:-}' bash -s" <<< "$REMOTE_PATH_SCRIPT"
   else
     "${SSH_BASE[@]}" "$DO_SSH" "bash -s" <<< "$REMOTE_PATH_SCRIPT"
   fi
