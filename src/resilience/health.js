@@ -43,16 +43,4 @@ async function getWorkerHealth() {
     memory: {
       rss: mem.rss,
       heapUsed: mem.heapUsed,
-      heapTotal: mem.heapTotal,
-      system: {
-        total: totalMem,
-        free: freeMem,
-        used: usedMem,
-      },
-    },
-    cpu_load: cpuPercent,
-    uptime: Math.round(process.uptime()),
-  };
-}
-
-module.exports = { getWorkerHealth };
+      heapTotal: mem.heapT
