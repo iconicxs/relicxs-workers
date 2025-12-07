@@ -3,6 +3,8 @@
  */
 const { uploadFile } = require('../../core/storage');
 const { callRpc, supabase } = require('../../core/supabase');
+const { detectMime } = require('./machinist.utils');
+const path = require('path');
 const config = require('../../core/config');
 
 function resolveBucketName(bucketId) {
@@ -32,8 +34,27 @@ function resolveBucketName(bucketId) {
  */
 async function uploadAndRecord({ logger, job, bucketId, remotePath, localPath, contentType, versionType, purpose, variant }) {
   logger.info({ tenant_id: job.tenant_id, asset_id: job.asset_id, remotePath }, '[MACHINIST][UPLOAD] Uploading file');
+  // Determine effective MIME: treat octet-stream as unspecified and infer
+  let effectiveContentType = contentType;
   try {
-    await uploadFile(bucketId, remotePath, localPath, contentType);
+    if (!effectiveContentType || effectiveContentType === 'application/octet-stream') {
+      try {
+        const fs = require('fs');
+        const buf = fs.readFileSync(localPath);
+        const det = detectMime(buf);
+        if (det && det.mime) {
+          effectiveContentType = det.mime;
+        } else {
+          const ext = String(path.extname(localPath) || '').toLowerCase();
+          if (ext === '.jpg' || ext === '.jpeg') effectiveContentType = 'image/jpeg';
+          else if (ext === '.png') effectiveContentType = 'image/png';
+          else if (ext === '.tif' || ext === '.tiff') effectiveContentType = 'image/tiff';
+        }
+      } catch (_) { /* fallback below */ }
+    }
+  } catch (_) { /* ignore mime inference errors */ }
+  try {
+    await uploadFile(bucketId, remotePath, localPath, effectiveContentType);
   } catch (err) {
     logger.error({ err, localPath }, '[MACHINIST][UPLOAD] Upload failed');
     // Create failed version record
@@ -68,7 +89,7 @@ async function uploadAndRecord({ logger, job, bucketId, remotePath, localPath, c
   // Create success record
   try {
     // Derive file_size and image dimensions when possible
-    let file_size = null, width = null, height = null, mime_type = contentType || null, bit_depth = null, color_space = null;
+    let file_size = null, width = null, height = null, mime_type = (effectiveContentType && effectiveContentType !== 'application/octet-stream') ? effectiveContentType : null, bit_depth = null, color_space = null;
     try { const fs = require('fs'); const s = fs.statSync(localPath); file_size = s.size; } catch (_) {}
     try {
       // Attempt to read image metadata (will throw for non-images; safe to ignore)

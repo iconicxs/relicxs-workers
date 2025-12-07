@@ -39,6 +39,7 @@ const config = require('../../core/config');
 const { recordJobStart, recordJobEnd } = require('../../job-system/metrics');
 const { logStart, logEnd, logFailure } = require('../../resilience/logging');
 const { sanitizeExt } = require('@security/sanitize');
+const { updateBatchStatus } = require('../../resilience/batch-status');
 
 function ensureDir(p) {
   try { fs.mkdirSync(p, { recursive: true }); } catch (_) { fse.ensureDirSync(p); }
@@ -300,11 +301,13 @@ async function processStandardMachinistJob(logger, job) {
 
     const result = { status: 'complete' };
     logEnd(logger, job, result);
+    try { await updateBatchStatus(job.batch_id); } catch (e) { logger.warn({ e }, '[MACHINIST][STANDARD] updateBatchStatus failed'); }
     return result;
   } catch (err) {
     logFailure(logger, job, err);
     logger.error({ err, tenant_id: job?.tenant_id, asset_id: job?.asset_id }, '[MACHINIST][STANDARD] Failed');
     try { await sendToDLQ(job, err.message || String(err), logger); } catch (_) {}
+    try { await updateBatchStatus(job.batch_id); } catch (e) { logger.warn({ e }, '[MACHINIST][STANDARD] updateBatchStatus failed'); }
     throw err;
   }
   finally {
