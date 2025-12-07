@@ -80,7 +80,8 @@ async function runMachinistPipeline(logger, job) {
     }
     let ext = sanitizeExt((job.original_extension || job.extension || job.input_extension || 'jpg'));
     if (!ext) throw new Error('[MACHINIST][PIPELINE] Unsafe or unsupported extension');
-    const landingPath = path.posix.join('landing', `tenant-${tenantId}`, `batch-${batchId}`, `asset-${assetId}`, `original.${ext}`);
+    // Download from landing bucket root (no extra 'landing/' prefix)
+    const landingPath = path.posix.join(`tenant-${tenantId}`, `batch-${batchId}`, `asset-${assetId}`, `original.${ext}`);
     inputLocalPath = path.join(workDir, `original.${ext}`);
     await wrap(() => withRetry(() => downloadFile(config.b2.landingBucketId || config.b2.processedStandardBucketId, landingPath, inputLocalPath), { logger, maxRetries: 2, baseDelay: 500, context: { step: 'download-original' } }), logger, { step: 'download-original' });
 

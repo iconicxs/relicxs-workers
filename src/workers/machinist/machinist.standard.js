@@ -67,7 +67,8 @@ async function processStandardMachinistJob(logger, job) {
     let ext = sanitizeExt((job.original_extension || job.extension || job.input_extension || 'jpg'));
     if (!ext) throw new Error('[MACHINIST][STANDARD] Unsafe or unsupported extension');
 
-    const landingPath = path.posix.join('landing', `tenant-${tenantId}`, `batch-${batchId}`, `asset-${assetId}`, `original.${ext}`);
+    // Download from landing bucket root (no extra 'landing/' prefix)
+    const landingPath = path.posix.join(`tenant-${tenantId}`, `batch-${batchId}`, `asset-${assetId}`, `original.${ext}`);
     const inputLocalPath = path.join(workDir, `original.${ext}`);
     await wrap(
       () => withRetry(
