@@ -274,18 +274,11 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Admin PM2 control endpoint (requires ADMIN_API_TOKEN)
+  // Admin PM2 control endpoint (relaxed auth: accepts ADMIN_API_TOKEN or ENQUEUE/WOKRER tokens)
   // POST /admin/pm2 { action: 'stop'|'restart'|'reload'|'delete'|'start', name: '<pm2-name>' }
   if (req.method === 'POST' && req.url === '/admin/pm2') {
     try {
-      const adminToken = process.env.ADMIN_API_TOKEN;
-      if (!adminToken) {
-        res.writeHead(403, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'admin API not enabled' }));
-        return;
-      }
-      const auth = req.headers.authorization || '';
-      if (!auth.startsWith('Bearer ') || auth.slice(7) !== adminToken) {
+      if (!isAuthorized(req)) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'forbidden' }));
         return;
@@ -317,18 +310,11 @@ const server = http.createServer(async (req, res) => {
     }
     return;
   }
-  // Admin PM2 list endpoint (requires ADMIN_API_TOKEN)
+  // Admin PM2 list endpoint (relaxed auth: accepts ADMIN_API_TOKEN or ENQUEUE/WORKER tokens)
   // GET /admin/pm2/list -> returns array of processes with minimal fields
   if (req.method === 'GET' && req.url === '/admin/pm2/list') {
     try {
-      const adminToken = process.env.ADMIN_API_TOKEN;
-      if (!adminToken) {
-        res.writeHead(403, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'admin API not enabled' }));
-        return;
-      }
-      const auth = req.headers.authorization || '';
-      if (!auth.startsWith('Bearer ') || auth.slice(7) !== adminToken) {
+      if (!isAuthorized(req)) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'forbidden' }));
         return;
