@@ -55,5 +55,4 @@ const { expectAssetVersions } = require('./validate-db');
     process.exit(1);
   }
   console.log('PASS: preservation pipeline validated');
-  process.exit(0);
-})().catch((err) => { console.error('FAIL:', err); process.exit(1); });
+  

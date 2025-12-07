@@ -45,5 +45,4 @@ const { expectAssetVersions } = require('./validate-db');
 
   if (!passed) { console.error('FAIL: viewing pipeline'); process.exit(1); }
   console.log('PASS: viewing pipeline');
-  process.exit(0);
-})().catch((err) => { console.error('FAIL:', err); process.exit(1); });
+  
