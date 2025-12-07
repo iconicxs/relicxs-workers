@@ -139,9 +139,7 @@ async function runMachinistPipeline(logger, job) {
       const manifestLocal = path.join(workDir, 'manifest.json');
       await fse.writeJson(manifestLocal, merged, { spaces: 2 });
 
-      const manifestRemote = path.posix.join(
-        'standard',
-        `tenant-${tenantId}`,
+      const manifestRemote = path.posix.join(`tenant-${tenantId}`, `batch-${batchId}`,
         `asset-${assetId}`,
         'metadata',
         'manifest.json'
@@ -153,7 +151,7 @@ async function runMachinistPipeline(logger, job) {
       const buf = fs.readFileSync(manifestLocal);
       const checksum = crypto.createHash('sha256').update(buf).digest('hex');
       const filesBucket = config.b2.filesBucketId || config.b2.processedStandardBucketId;
-      const filesRemote = path.posix.join('files', `tenant-${tenantId}`, `asset-${assetId}`, 'metadata', 'manifest.json');
+      const filesRemote = path.posix.join(`tenant-${tenantId}`, `batch-${batchId}`, `asset-${assetId}`, 'metadata', 'manifest.json');
       await wrap(() => withRetry(() => require('../../core/storage').uploadFile(filesBucket, filesRemote, manifestLocal, 'application/json'), { logger, maxRetries: 2, baseDelay: 500, context: { step: 'upload-merged-manifest' } }), logger, { step: 'upload-merged-manifest' });
 
       const { supabase } = require('../../core/supabase');
@@ -196,7 +194,7 @@ async function runMachinistPipeline(logger, job) {
         }
         throw e;
       }
-      const origRemote = path.posix.join('standard', `tenant-${tenantId}`, `asset-${assetId}`, 'preservation', `${normalizeFilename('original')}.${ext}`);
+      const origRemote = path.posix.join(`tenant-${tenantId}`, `batch-${batchId}`, `asset-${assetId}`, 'preservation', `${normalizeFilename('original')}.${ext}`);
       const { fileExists } = require('../../core/storage');
       const bucketId = config.b2.processedArchiveBucketId || config.b2.processedStandardBucketId;
       const exists = await fileExists(bucketId, origRemote).catch(() => false);
@@ -207,7 +205,7 @@ async function runMachinistPipeline(logger, job) {
       }
       versions.preservation = { path: origRemote };
     } else if (purpose === 'viewing') {
-      const origViewRemote = path.posix.join('standard', `tenant-${tenantId}`, `asset-${assetId}`, 'viewing', `${normalizeFilename('original')}.${ext}`);
+      const origViewRemote = path.posix.join(`tenant-${tenantId}`, `batch-${batchId}`, `asset-${assetId}`, 'viewing', `${normalizeFilename('original')}.${ext}`);
       const { fileExists } = require('../../core/storage');
       const exists = await fileExists(config.b2.processedStandardBucketId, origViewRemote).catch(() => false);
       if (!exists) {
@@ -218,7 +216,7 @@ async function runMachinistPipeline(logger, job) {
       }
       versions.viewing_original = { path: origViewRemote };
     } else if (purpose === 'production') {
-      const origProdRemote = path.posix.join('standard', `tenant-${tenantId}`, `asset-${assetId}`, 'production', `${normalizeFilename('original')}.${ext}`);
+      const origProdRemote = path.posix.join(`tenant-${tenantId}`, `batch-${batchId}`, `asset-${assetId}`, 'production', `${normalizeFilename('original')}.${ext}`);
       const { fileExists } = require('../../core/storage');
       const prodExists = await fileExists(config.b2.processedStandardBucketId, origProdRemote).catch(() => false);
       if (!prodExists) {
@@ -228,7 +226,7 @@ async function runMachinistPipeline(logger, job) {
       }
       versions.production_original = { path: origProdRemote };
     } else if (purpose === 'restoration') {
-      const origRestRemote = path.posix.join('standard', `tenant-${tenantId}`, `asset-${assetId}`, 'restoration', `${normalizeFilename('original')}.${ext}`);
+      const origRestRemote = path.posix.join(`tenant-${tenantId}`, `batch-${batchId}`, `asset-${assetId}`, 'restoration', `${normalizeFilename('original')}.${ext}`);
       const { fileExists } = require('../../core/storage');
       const restExists = await fileExists(config.b2.processedStandardBucketId, origRestRemote).catch(() => false);
       if (!restExists) {
@@ -247,9 +245,7 @@ async function runMachinistPipeline(logger, job) {
 
     // 5. Upload derivatives and record versions
     if (derivatives.viewing) {
-      const viewingRemote = path.posix.join(
-        'standard',
-        `tenant-${tenantId}`,
+      const viewingRemote = path.posix.join(`tenant-${tenantId}`, `batch-${batchId}`,
         `asset-${assetId}`,
         'viewing',
         `${normalizeFilename('viewing')}.jpg`
@@ -265,9 +261,7 @@ async function runMachinistPipeline(logger, job) {
     }
 
     if (derivatives.ai) {
-      const aiRemote = path.posix.join(
-        'standard',
-        `tenant-${tenantId}`,
+      const aiRemote = path.posix.join(`tenant-${tenantId}`, `batch-${batchId}`,
         `asset-${assetId}`,
         'ai',
         `${normalizeFilename('ai')}.jpg`
@@ -284,9 +278,7 @@ async function runMachinistPipeline(logger, job) {
     if (Array.isArray(derivatives.thumbnails)) {
       versions.thumbnails = [];
       for (const tn of derivatives.thumbnails) {
-        const tnRemote = path.posix.join(
-          'standard',
-          `tenant-${tenantId}`,
+        const tnRemote = path.posix.join(`tenant-${tenantId}`, `batch-${batchId}`,
           `asset-${assetId}`,
           'thumbnails',
           `${normalizeFilename(`thumb-${tn.size}`)}.jpg`

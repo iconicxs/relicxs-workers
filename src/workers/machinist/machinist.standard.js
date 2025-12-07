@@ -108,9 +108,7 @@ async function processStandardMachinistJob(logger, job) {
       const { fileExists } = require('../../core/storage');
       let origRemote = null;
       if (purpose === 'preservation') {
-        origRemote = path.posix.join(
-          'standard',
-          `tenant-${tenantId}`,
+        origRemote = path.posix.join(`tenant-${tenantId}`, `batch-${batchId}`,
           `asset-${assetId}`,
           'preservation',
           fileName
@@ -141,9 +139,7 @@ async function processStandardMachinistJob(logger, job) {
           logger.info({ origRemote }, '[MACHINIST][STANDARD] Original already exists (preservation); skipping upload');
         }
       } else if (purpose === 'viewing' || purpose === 'production' || purpose === 'restoration') {
-        origRemote = path.posix.join(
-          'standard',
-          `tenant-${tenantId}`,
+        origRemote = path.posix.join(`tenant-${tenantId}`, `batch-${batchId}`,
           `asset-${assetId}`,
           purpose,
           fileName
@@ -187,9 +183,7 @@ async function processStandardMachinistJob(logger, job) {
 
     // 3) Upload viewing
     if (derivatives.viewing) {
-      const viewingRemote = path.posix.join(
-        'standard',
-        `tenant-${tenantId}`,
+      const viewingRemote = path.posix.join(`tenant-${tenantId}`, `batch-${batchId}`,
         `asset-${assetId}`,
         'viewing',
         `${normalizeFilename('viewing')}.jpg`
@@ -212,9 +206,7 @@ async function processStandardMachinistJob(logger, job) {
 
     // 4) Upload AI
     if (derivatives.ai) {
-      const aiRemote = path.posix.join(
-        'standard',
-        `tenant-${tenantId}`,
+      const aiRemote = path.posix.join(`tenant-${tenantId}`, `batch-${batchId}`,
         `asset-${assetId}`,
         'ai',
         `${normalizeFilename('ai')}.jpg`
@@ -237,9 +229,7 @@ async function processStandardMachinistJob(logger, job) {
     // 5) Upload thumbnails
     if (Array.isArray(derivatives.thumbnails)) {
       for (const tn of derivatives.thumbnails) {
-        const tnRemote = path.posix.join(
-          'standard',
-          `tenant-${tenantId}`,
+        const tnRemote = path.posix.join(`tenant-${tenantId}`, `batch-${batchId}`,
           `asset-${assetId}`,
           'thumbnails',
           `${normalizeFilename(`thumb-${tn.size}`)}.jpg`
@@ -275,9 +265,7 @@ async function processStandardMachinistJob(logger, job) {
 
       // Prefer files bucket
       const filesBucket = config.b2.filesBucketId || config.b2.processedStandardBucketId;
-      const manifestRemote = path.posix.join(
-        'files',
-        `tenant-${tenantId}`,
+      const manifestRemote = path.posix.join(`tenant-${tenantId}`, `batch-${batchId}`,
         `asset-${assetId}`,
         'metadata',
         'manifest.json'
