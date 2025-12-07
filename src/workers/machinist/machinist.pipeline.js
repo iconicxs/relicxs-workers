@@ -184,20 +184,45 @@ async function runMachinistPipeline(logger, job) {
         throw e;
       }
       const origRemote = path.posix.join('standard', `tenant-${tenantId}`, `asset-${assetId}`, 'preservation', `${normalizeFilename('original')}.${ext}`);
-      await wrap(() => withRetry(() => uploadAndRecordPreservation({ logger, job, bucketId: config.b2.processedArchiveBucketId || config.b2.processedStandardBucketId, remotePath: origRemote, localPath: inputLocalPath }), { logger, maxRetries: 2, baseDelay: 500, context: { step: 'upload-preservation' } }), logger, { step: 'upload-preservation' });
+      const { fileExists } = require('../../core/storage');
+      const bucketId = config.b2.processedArchiveBucketId || config.b2.processedStandardBucketId;
+      const exists = await fileExists(bucketId, origRemote).catch(() => false);
+      if (!exists) {
+        await wrap(() => withRetry(() => uploadAndRecordPreservation({ logger, job, bucketId, remotePath: origRemote, localPath: inputLocalPath }), { logger, maxRetries: 2, baseDelay: 500, context: { step: 'upload-preservation' } }), logger, { step: 'upload-preservation' });
+      } else {
+        logger.info({ origRemote }, '[MACHINIST][PIPELINE] Preservation original exists; skipping upload');
+      }
       versions.preservation = { path: origRemote };
     } else if (purpose === 'viewing') {
       const origViewRemote = path.posix.join('standard', `tenant-${tenantId}`, `asset-${assetId}`, 'viewing', `${normalizeFilename('original')}.${ext}`);
-      // For original under viewing, we want purpose=viewing, variant=original
-      await wrap(() => withRetry(() => uploadAndRecord({ logger, job, bucketId: config.b2.processedStandardBucketId, remotePath: origViewRemote, localPath: inputLocalPath, contentType: 'application/octet-stream', versionType: 'viewing', purpose: 'viewing', variant: 'original' }), { logger, maxRetries: 2, baseDelay: 500, context: { step: 'upload-viewing-original' } }), logger, { step: 'upload-viewing-original' });
+      const { fileExists } = require('../../core/storage');
+      const exists = await fileExists(config.b2.processedStandardBucketId, origViewRemote).catch(() => false);
+      if (!exists) {
+        // For original under viewing, we want purpose=viewing, variant=original
+        await wrap(() => withRetry(() => uploadAndRecord({ logger, job, bucketId: config.b2.processedStandardBucketId, remotePath: origViewRemote, localPath: inputLocalPath, contentType: 'application/octet-stream', versionType: 'viewing', purpose: 'viewing', variant: 'original' }), { logger, maxRetries: 2, baseDelay: 500, context: { step: 'upload-viewing-original' } }), logger, { step: 'upload-viewing-original' });
+      } else {
+        logger.info({ origViewRemote }, '[MACHINIST][PIPELINE] Viewing original exists; skipping upload');
+      }
       versions.viewing_original = { path: origViewRemote };
     } else if (purpose === 'production') {
       const origProdRemote = path.posix.join('standard', `tenant-${tenantId}`, `asset-${assetId}`, 'production', `${normalizeFilename('original')}.${ext}`);
-      await wrap(() => withRetry(() => uploadAndRecord({ logger, job, bucketId: config.b2.processedStandardBucketId, remotePath: origProdRemote, localPath: inputLocalPath, contentType: 'application/octet-stream', versionType: 'production', purpose: 'production', variant: 'original' }), { logger, maxRetries: 2, baseDelay: 500, context: { step: 'upload-production-original' } }), logger, { step: 'upload-production-original' });
+      const { fileExists } = require('../../core/storage');
+      const prodExists = await fileExists(config.b2.processedStandardBucketId, origProdRemote).catch(() => false);
+      if (!prodExists) {
+        await wrap(() => withRetry(() => uploadAndRecord({ logger, job, bucketId: config.b2.processedStandardBucketId, remotePath: origProdRemote, localPath: inputLocalPath, contentType: 'application/octet-stream', versionType: 'production', purpose: 'production', variant: 'original' }), { logger, maxRetries: 2, baseDelay: 500, context: { step: 'upload-production-original' } }), logger, { step: 'upload-production-original' });
+      } else {
+        logger.info({ origProdRemote }, '[MACHINIST][PIPELINE] Production original exists; skipping upload');
+      }
       versions.production_original = { path: origProdRemote };
     } else if (purpose === 'restoration') {
       const origRestRemote = path.posix.join('standard', `tenant-${tenantId}`, `asset-${assetId}`, 'restoration', `${normalizeFilename('original')}.${ext}`);
-      await wrap(() => withRetry(() => uploadAndRecord({ logger, job, bucketId: config.b2.processedStandardBucketId, remotePath: origRestRemote, localPath: inputLocalPath, contentType: 'application/octet-stream', versionType: 'restoration', purpose: 'restoration', variant: 'original' }), { logger, maxRetries: 2, baseDelay: 500, context: { step: 'upload-restoration-original' } }), logger, { step: 'upload-restoration-original' });
+      const { fileExists } = require('../../core/storage');
+      const restExists = await fileExists(config.b2.processedStandardBucketId, origRestRemote).catch(() => false);
+      if (!restExists) {
+        await wrap(() => withRetry(() => uploadAndRecord({ logger, job, bucketId: config.b2.processedStandardBucketId, remotePath: origRestRemote, localPath: inputLocalPath, contentType: 'application/octet-stream', versionType: 'restoration', purpose: 'restoration', variant: 'original' }), { logger, maxRetries: 2, baseDelay: 500, context: { step: 'upload-restoration-original' } }), logger, { step: 'upload-restoration-original' });
+      } else {
+        logger.info({ origRestRemote }, '[MACHINIST][PIPELINE] Restoration original exists; skipping upload');
+      }
       versions.restoration_original = { path: origRestRemote };
       } else {
         throw new ValidationError('INVALID_PURPOSE', 'file_purpose', `Unsupported purpose: ${job.file_purpose}`);

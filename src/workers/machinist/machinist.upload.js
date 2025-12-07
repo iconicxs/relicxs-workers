@@ -2,7 +2,7 @@
  * Upload derivatives to storage and record versions in Supabase via RPC.
  */
 const { uploadFile } = require('../../core/storage');
-const { callRpc } = require('../../core/supabase');
+const { callRpc, supabase } = require('../../core/supabase');
 const config = require('../../core/config');
 
 function resolveBucketName(bucketId) {
@@ -38,7 +38,27 @@ async function uploadAndRecord({ logger, job, bucketId, remotePath, localPath, c
     logger.error({ err, localPath }, '[MACHINIST][UPLOAD] Upload failed');
     // Create failed version record
     try {
-      await callRpc({ name: 'create_asset_version', params: { tenant_id: job.tenant_id, batch_id: job.batch_id || null, asset_id: job.asset_id, path: remotePath, storage_path: remotePath, bucket_name: resolveBucketName(bucketId), status: 'failed', version_type: versionType, purpose: purpose || job.file_purpose, variant: variant || versionType }, tenantId: job.tenant_id });
+      const pv = purpose || job.file_purpose;
+      const vr = variant || versionType;
+      const { data: existing } = await supabase
+        .from('asset_versions')
+        .select('id')
+        .eq('asset_id', job.asset_id)
+        .eq('purpose', pv)
+        .eq('variant', vr)
+        .eq('type', versionType)
+        .limit(1)
+        .maybeSingle();
+      if (existing && existing.id) {
+        await supabase.from('asset_versions').update({
+          status: 'failed',
+          storage_path: remotePath,
+          bucket_name: resolveBucketName(bucketId),
+          updated_at: new Date().toISOString(),
+        }).eq('id', existing.id);
+      } else {
+        await callRpc({ name: 'create_asset_version', params: { tenant_id: job.tenant_id, batch_id: job.batch_id || null, asset_id: job.asset_id, path: remotePath, storage_path: remotePath, bucket_name: resolveBucketName(bucketId), status: 'failed', version_type: versionType, purpose: pv, variant: vr }, tenantId: job.tenant_id });
+      }
     } catch (rpcErr) {
       logger.error({ err: rpcErr }, '[MACHINIST][UPLOAD] Failed to create failed version record');
     }
@@ -82,32 +102,61 @@ async function uploadAndRecord({ logger, job, bucketId, remotePath, localPath, c
     if (!color_space && job && job._exifColorSpace) color_space = job._exifColorSpace;
     if (!mime_type && job && job._exifMimeType) mime_type = job._exifMimeType;
 
-    await callRpc({
-      name: 'create_asset_version',
-      params: {
-        tenant_id: job.tenant_id,
-        batch_id: job.batch_id || null,
-        asset_id: job.asset_id,
-        name: variant || versionType || null,
-        type: versionType,
-        purpose: purpose || job.file_purpose,
-        variant: variant || versionType,
+    const pv = purpose || job.file_purpose;
+    const vr = variant || versionType;
+    const { data: existing } = await supabase
+      .from('asset_versions')
+      .select('id')
+      .eq('asset_id', job.asset_id)
+      .eq('purpose', pv)
+      .eq('variant', vr)
+      .eq('type', versionType)
+      .limit(1)
+      .maybeSingle();
+    if (existing && existing.id) {
+      await supabase.from('asset_versions').update({
+        name: vr || null,
         file_size,
         width,
         height,
         bit_depth,
         color_space,
-        metadata: null,
         storage_path: remotePath,
         status: 'success',
         checksum: null,
         checksum_algorithm: 'sha256',
         mime_type,
         bucket_name: resolveBucketName(bucketId),
-        path: remotePath,
-      },
-      tenantId: job.tenant_id,
-    });
+        updated_at: new Date().toISOString(),
+      }).eq('id', existing.id);
+    } else {
+      await callRpc({
+        name: 'create_asset_version',
+        params: {
+          tenant_id: job.tenant_id,
+          batch_id: job.batch_id || null,
+          asset_id: job.asset_id,
+          name: vr || null,
+          type: versionType,
+          purpose: pv,
+          variant: vr,
+          file_size,
+          width,
+          height,
+          bit_depth,
+          color_space,
+          metadata: null,
+          storage_path: remotePath,
+          status: 'success',
+          checksum: null,
+          checksum_algorithm: 'sha256',
+          mime_type,
+          bucket_name: resolveBucketName(bucketId),
+          path: remotePath,
+        },
+        tenantId: job.tenant_id,
+      });
+    }
   } catch (rpcErr) {
     logger.error({ err: rpcErr }, '[MACHINIST][UPLOAD] Failed to create success version record');
     throw rpcErr;
