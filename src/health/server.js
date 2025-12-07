@@ -3,6 +3,8 @@ const http = require('http');
 const { getWorkerHealth } = require('../resilience/health');
 const { registry } = require('../metrics/prometheus');
 const { MINIMAL_MODE } = require('../core/config');
+const { getRedisClient } = require('../core/redis');
+const { resolveQueueForJob } = require('../priorities/priority.router');
 
 const config = require('../core/config');
 const PORT = Number(config.healthPort || 8081);
@@ -24,6 +26,60 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify(MINIMAL_MODE ? { ok: true, mode: 'minimal' } : { error: err.message }));
     }
     return;
+  }
+  // Lightweight enqueue endpoint for admin console
+  // POST /enqueue  Authorization: Bearer <ENQUEUE_TOKEN>
+  // Body: { job_type: 'machinist', processing_type: 'instant'|'standard', tenant_id, batch_id, asset_id, file_purpose, original_extension }
+  if (req.method === 'POST' && req.url === '/enqueue') {
+    try {
+      // Auth
+      const header = req.headers['authorization'] || '';
+      const token = (header.startsWith('Bearer ') ? header.slice(7) : '').trim();
+      if (!process.env.ENQUEUE_TOKEN || token !== process.env.ENQUEUE_TOKEN) {
+        res.writeHead(401, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'unauthorized' }));
+      }
+
+      // Read body
+      const chunks = [];
+      await new Promise((resolve, reject) => {
+        req.on('data', (c) => chunks.push(c));
+        req.on('end', resolve);
+        req.on('error', reject);
+      });
+      let job = {};
+      try { job = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch (_) {}
+
+      // Minimal validation
+      if (!job || typeof job !== 'object') {
+        res.writeHead(400, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'invalid_body' }));
+      }
+      // Ensure job_type defaults to machinist if omitted
+      if (!job.job_type && !job.type) job.job_type = 'machinist';
+
+      // Resolve queue and enqueue
+      let queue;
+      try {
+        queue = resolveQueueForJob(job);
+      } catch (err) {
+        res.writeHead(400, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'invalid_job', message: err && err.message }));
+      }
+      try {
+        const redis = await getRedisClient();
+        await redis.lPush(queue, JSON.stringify(job));
+      } catch (e) {
+        res.writeHead(500, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'enqueue_failed', message: e && e.message }));
+      }
+
+      res.writeHead(202, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ queued: true, queue }));
+    } catch (err) {
+      res.writeHead(500, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'server_error', message: err && err.message }));
+    }
   }
   // Admin enqueue endpoint (basic scaffold)
   if (req.method === 'POST' && req.url === '/admin/jobs') {

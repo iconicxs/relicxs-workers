@@ -109,4 +109,76 @@ async function uploadAndRecord({ logger, job, bucketId, remotePath, localPath, c
       tenantId: job.tenant_id,
     });
   } catch (rpcErr) {
-    logger.error({ err: rpcErr }, '[MACHINIST][UPLOAD] Failed to create success version record')
+    logger.error({ err: rpcErr }, '[MACHINIST][UPLOAD] Failed to create success version record');
+    throw rpcErr;
+  }
+}
+
+async function uploadAndRecordPreservation({ logger, job, bucketId, remotePath, localPath }) {
+  return uploadAndRecord({ logger, job, bucketId, remotePath, localPath, contentType: 'application/octet-stream', versionType: 'preservation', purpose: job.file_purpose, variant: 'original' });
+}
+
+async function uploadAndRecordViewing({ logger, job, bucketId, remotePath, localPath }) {
+  return uploadAndRecord({ logger, job, bucketId, remotePath, localPath, contentType: 'image/jpeg', versionType: 'viewing', purpose: 'viewing', variant: 'processed' });
+}
+
+async function uploadAndRecordAI({ logger, job, bucketId, remotePath, localPath }) {
+  return uploadAndRecord({ logger, job, bucketId, remotePath, localPath, contentType: 'image/jpeg', versionType: 'ai', purpose: 'ai', variant: 'ai' });
+}
+
+async function uploadAndRecordThumbnail({ logger, job, bucketId, remotePath, localPath, size }) {
+  // Purpose and type as 'thumbnail', variant as size label (small|medium|large)
+  return uploadAndRecord({ logger, job, bucketId, remotePath, localPath, contentType: 'image/jpeg', versionType: 'thumbnail', purpose: 'thumbnail', variant: size });
+}
+
+/**
+ * Upload metadata JSON and create a version record.
+ * @param {object} params
+ * @param {import('pino').Logger} params.logger
+ * @param {object} params.job
+ * @param {string} params.bucketId
+ * @param {string} params.remotePath
+ * @param {string} params.localPath
+ */
+async function uploadMetadata({ logger, job, bucketId, remotePath, localPath }) {
+  return uploadAndRecord({ logger, job, bucketId, remotePath, localPath, contentType: 'application/json', versionType: 'metadata', purpose: job.file_purpose, variant: 'metadata' });
+}
+
+/**
+ * Unified upload API for Machinist pipelines.
+ * Accepts a buffer + remote path + mime type.
+ * Delegates to existing uploadFileToB2() when available or falls back to core/storage.
+ */
+async function uploadToB2({ buffer, path, mime }) {
+  // If an optimized uploader exists, use it
+  try {
+    if (typeof uploadFileToB2 === 'function') {
+      return uploadFileToB2({ fileBuffer: buffer, remotePath: path, contentType: mime });
+    }
+  } catch (_) {
+    // ignore and fall back
+  }
+
+  // Fallback: write buffer to tmp file and use core/storage.uploadFile
+  const fs = require('fs');
+  const os = require('os');
+  const p = require('path');
+  const config = require('../../core/config');
+  const tmpPath = p.join(os.tmpdir(), `machinist-upload-${Date.now()}-${Math.random().toString(36).slice(2)}${p.extname(path) || ''}`);
+  fs.writeFileSync(tmpPath, buffer);
+  const bucketId = path.includes('/archive/')
+    ? (config.b2.processedArchiveBucketId || config.b2.processedStandardBucketId)
+    : config.b2.processedStandardBucketId;
+  await uploadFile(bucketId, path, tmpPath, mime);
+  try { fs.unlinkSync(tmpPath); } catch (_) {}
+  return { path, bucketId };
+}
+
+module.exports = {
+  uploadToB2,
+  uploadAndRecordPreservation,
+  uploadAndRecordViewing,
+  uploadAndRecordAI,
+  uploadAndRecordThumbnail,
+  uploadMetadata,
+};
