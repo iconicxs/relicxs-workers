@@ -67,6 +67,23 @@ async function processStandardMachinistJob(logger, job) {
       throw new Error('[MACHINIST][STANDARD] Unsafe or unsupported input_extension');
     }
     let ext = sanitizeExt((job.original_extension || job.extension || job.input_extension || ''));
+    // If extension not provided, attempt to fetch from Supabase asset.storage_path
+    if (!ext) {
+      try {
+        const { supabase } = require('../../core/supabase');
+        const { data: assetRow } = await supabase
+          .from('asset')
+          .select('storage_path')
+          .eq('id', job.asset_id)
+          .single();
+        const p = assetRow && assetRow.storage_path ? String(assetRow.storage_path) : '';
+        const m = p.match(/\.([A-Za-z0-9]+)$/);
+        if (m && m[1]) {
+          const guessed = sanitizeExt(m[1]);
+          if (guessed) ext = guessed;
+        }
+      } catch (_) {}
+    }
     // Candidate extensions to try when not provided
     const extCandidates = [];
     if (ext) extCandidates.push(ext);
