@@ -105,9 +105,10 @@ async function processStandardMachinistJob(logger, job) {
         `${normalizeFilename('viewing')}.jpg`
       );
       try {
+        // purpose=viewing, variant=processed
         await wrap(
           () => withRetry(
-            () => uploadAndRecordViewing({ logger, job, bucketId: config.b2.processedStandardBucketId, remotePath: viewingRemote, localPath: derivatives.viewing.localPath }),
+            () => require('./machinist.upload').uploadAndRecord({ logger, job, bucketId: config.b2.processedStandardBucketId, remotePath: viewingRemote, localPath: derivatives.viewing.localPath, contentType: 'image/jpeg', versionType: 'viewing', purpose: 'viewing', variant: 'processed' }),
             { logger, maxRetries: 2, baseDelay: 500, context: { step: 'upload-viewing' } }
           ),
           logger,

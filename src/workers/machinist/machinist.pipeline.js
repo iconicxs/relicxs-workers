@@ -99,12 +99,35 @@ async function runMachinistPipeline(logger, job) {
 
     // 2. Extract EXIF metadata (normalized)
     let exif = {};
+    let _exifBitDepth = null;
+    let _exifColorSpace = null;
+    let _exifMimeType = null;
     try {
       const rawExif = await extractExifMetadata(inputLocalPath);
+      // Derive color space and bit depth from raw EXIF when available
+      try {
+        const bits = rawExif?.BitsPerSample || rawExif?.BitDepth || rawExif?.BitsPerPixel || null;
+        if (typeof bits === 'string') {
+          // e.g., "8 8 8" -> 8
+          const first = parseInt(bits.split(/\s+/)[0], 10);
+          if (!isNaN(first)) _exifBitDepth = first;
+        } else if (typeof bits === 'number') {
+          _exifBitDepth = bits;
+        } else if (Array.isArray(bits) && bits.length > 0) {
+          const first = parseInt(bits[0], 10);
+          if (!isNaN(first)) _exifBitDepth = first;
+        }
+        const cs = rawExif?.ColorSpace || rawExif?.PhotometricInterpretation || rawExif?.ProfileDescription || null;
+        if (cs && typeof cs === 'string') _exifColorSpace = cs;
+        const mt = rawExif?.MIMEType || rawExif?.MimeType || null;
+        if (mt && typeof mt === 'string') _exifMimeType = mt;
+      } catch (_) {}
       exif = normalizeExif(rawExif);
     } catch (err) {
       logger.warn({ err }, '[MACHINIST] EXIF extraction failed, continuing with empty EXIF');
     }
+    // Attach EXIF-derived fallbacks for downstream upload recording
+    try { job._exifBitDepth = _exifBitDepth; job._exifColorSpace = _exifColorSpace; job._exifMimeType = _exifMimeType; } catch (_) {}
     const metaPathLocal = path.join(workDir, 'metadata.json');
     await fse.writeJson(metaPathLocal, exif, { spaces: 2 });
     const metaRemote = path.posix.join('standard', `tenant-${tenantId}`, `asset-${assetId}`, 'metadata', 'metadata.json');
@@ -164,15 +187,16 @@ async function runMachinistPipeline(logger, job) {
       versions.preservation = { path: origRemote };
     } else if (purpose === 'viewing') {
       const origViewRemote = path.posix.join('standard', `tenant-${tenantId}`, `asset-${assetId}`, 'viewing', `${normalizeFilename('original')}.${ext}`);
-      await wrap(() => withRetry(() => uploadAndRecordViewing({ logger, job, bucketId: config.b2.processedStandardBucketId, remotePath: origViewRemote, localPath: inputLocalPath }), { logger, maxRetries: 2, baseDelay: 500, context: { step: 'upload-viewing-original' } }), logger, { step: 'upload-viewing-original' });
+      // For original under viewing, we want purpose=viewing, variant=original
+      await wrap(() => withRetry(() => uploadAndRecord({ logger, job, bucketId: config.b2.processedStandardBucketId, remotePath: origViewRemote, localPath: inputLocalPath, contentType: 'application/octet-stream', versionType: 'viewing', purpose: 'viewing', variant: 'original' }), { logger, maxRetries: 2, baseDelay: 500, context: { step: 'upload-viewing-original' } }), logger, { step: 'upload-viewing-original' });
       versions.viewing_original = { path: origViewRemote };
     } else if (purpose === 'production') {
       const origProdRemote = path.posix.join('standard', `tenant-${tenantId}`, `asset-${assetId}`, 'production', `${normalizeFilename('original')}.${ext}`);
-      await wrap(() => withRetry(() => uploadAndRecordViewing({ logger, job, bucketId: config.b2.processedStandardBucketId, remotePath: origProdRemote, localPath: inputLocalPath }), { logger, maxRetries: 2, baseDelay: 500, context: { step: 'upload-production-original' } }), logger, { step: 'upload-production-original' });
+      await wrap(() => withRetry(() => uploadAndRecord({ logger, job, bucketId: config.b2.processedStandardBucketId, remotePath: origProdRemote, localPath: inputLocalPath, contentType: 'application/octet-stream', versionType: 'production', purpose: 'production', variant: 'original' }), { logger, maxRetries: 2, baseDelay: 500, context: { step: 'upload-production-original' } }), logger, { step: 'upload-production-original' });
       versions.production_original = { path: origProdRemote };
     } else if (purpose === 'restoration') {
       const origRestRemote = path.posix.join('standard', `tenant-${tenantId}`, `asset-${assetId}`, 'restoration', `${normalizeFilename('original')}.${ext}`);
-      await wrap(() => withRetry(() => uploadAndRecordViewing({ logger, job, bucketId: config.b2.processedStandardBucketId, remotePath: origRestRemote, localPath: inputLocalPath }), { logger, maxRetries: 2, baseDelay: 500, context: { step: 'upload-restoration-original' } }), logger, { step: 'upload-restoration-original' });
+      await wrap(() => withRetry(() => uploadAndRecord({ logger, job, bucketId: config.b2.processedStandardBucketId, remotePath: origRestRemote, localPath: inputLocalPath, contentType: 'application/octet-stream', versionType: 'restoration', purpose: 'restoration', variant: 'original' }), { logger, maxRetries: 2, baseDelay: 500, context: { step: 'upload-restoration-original' } }), logger, { step: 'upload-restoration-original' });
       versions.restoration_original = { path: origRestRemote };
       } else {
         throw new ValidationError('INVALID_PURPOSE', 'file_purpose', `Unsupported purpose: ${job.file_purpose}`);
@@ -192,7 +216,8 @@ async function runMachinistPipeline(logger, job) {
         `${normalizeFilename('viewing')}.jpg`
       );
       try {
-        await wrap(() => withRetry(() => uploadAndRecordViewing({ logger, job, bucketId: config.b2.processedStandardBucketId, remotePath: viewingRemote, localPath: derivatives.viewing.localPath }), { logger, maxRetries: 2, baseDelay: 500, context: { step: 'upload-viewing' } }), logger, { step: 'upload-viewing' });
+        // derivative viewing: purpose=viewing, variant=processed
+        await wrap(() => withRetry(() => uploadAndRecord({ logger, job, bucketId: config.b2.processedStandardBucketId, remotePath: viewingRemote, localPath: derivatives.viewing.localPath, contentType: 'image/jpeg', versionType: 'viewing', purpose: 'viewing', variant: 'processed' }), { logger, maxRetries: 2, baseDelay: 500, context: { step: 'upload-viewing' } }), logger, { step: 'upload-viewing' });
         versions.viewing = { path: viewingRemote };
       } catch (e) {
         logger.error({ err: e }, '[MACHINIST] Viewing derivative failed (continuing)');

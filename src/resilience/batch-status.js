@@ -12,12 +12,14 @@ async function updateBatchStatus(batchId) {
     const total = rows.length;
     const success = rows.filter((r) => r.status === 'success').length;
     const failed = rows.filter((r) => r.status === 'failed').length;
-    let status = 'pending';
-    if (total > 0 && success === total) status = 'complete';
-    else if (failed > 0) status = 'failed_with_errors';
+    // Map to allowed batch.status: not_started | in_progress | complete | cancelled
+    let status = 'not_started';
+    if (total === 0) status = 'not_started';
+    else if (success === total) status = 'complete';
+    else status = 'in_progress';
 
-    const notes = { completed_at: new Date().toISOString(), total_assets: total, success, failed };
-    await supabase.from('batches').update({ status, notes }).eq('id', batchId);
+    // Update batch table (schema uses 'batch')
+    await supabase.from('batch').update({ status }).eq('id', batchId);
     logger.info({ batch_id: batchId, status }, '[BATCH] Updated status');
   } catch (err) {
     logger.error({ err }, '[BATCH] Failed to update batch status');

@@ -11,6 +11,7 @@ const path = require('path');
 const crypto = require('crypto');
 const tar = require('tar');
 const { uploadFile } = require('../../core/storage');
+const config = require('../../core/config');
 const { callRpc, supabase } = require('../../core/supabase');
 const { sendToDLQ } = require('../../resilience/dlq');
 const LIMITS = require('@safety/runtime-limits');
@@ -139,9 +140,9 @@ async function archiveAssetToGlacier(logger, job, workDir) {
     // 8. Upload to Glacier (via B2 bucket)
     logger.info({ archiveRemote }, "[ARCHIVE] Uploading archive to storage");
 
+    const usedBucketId = process.env.GLACIER_BUCKET_ID || process.env.B2_PROCESSED_ARCHIVE_BUCKET_ID;
     await uploadFile(
-      // If you have a glacierBucketId use it. Else use processedArchiveBucketId.
-      process.env.GLACIER_BUCKET_ID || process.env.B2_PROCESSED_ARCHIVE_BUCKET_ID,
+      usedBucketId,
       archiveRemote,
       archiveLocal,
       "application/gzip"
@@ -150,18 +151,41 @@ async function archiveAssetToGlacier(logger, job, workDir) {
     // 9. Record asset version
     logger.info("[ARCHIVE] Recording preservation asset_version");
 
+    // Gather file_size for record
+    let file_size = null;
+    try { const s = fs.statSync(archiveLocal); file_size = s.size; } catch (_) {}
+
+    // Resolve friendly bucket label
+    let bucket_label = null;
+    if (process.env.GLACIER_BUCKET_ID || (config.aws && config.aws.archiveBucket && usedBucketId === config.aws.archiveBucket)) {
+      bucket_label = 'AWS_archival';
+    } else if (usedBucketId === (config.b2 && config.b2.processedArchiveBucketId)) {
+      bucket_label = 'B2_processed_archive_bucket';
+    } else {
+      bucket_label = usedBucketId || null;
+    }
+
     await callRpc({
       name: "create_asset_version",
       params: {
+        tenant_id,
+        batch_id: job.batch_id || null,
         asset_id,
+        // storage
         path: archiveRemote,
+        storage_path: archiveRemote,
+        bucket_name: bucket_label,
+        // typing
         version_type: "preservation",
         purpose: "preservation",
         variant: "original",
+        // file characteristics
+        file_size,
         checksum,
         checksum_algorithm: "sha256",
         mime_type: "application/gzip",
-        status: "complete",
+        // status
+        status: "success",
       },
       tenantId: tenant_id,
     });
