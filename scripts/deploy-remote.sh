@@ -27,6 +27,15 @@ if [[ -f "$ROOT_DIR/.env" ]]; then
   fi
 fi
 
+# Read WORKER_ENQUEUE_TOKEN locally (if present) so we can sync it to remote
+if [[ -f "$ROOT_DIR/.env" ]]; then
+  WORKER_ENQUEUE_TOKEN_RAW=$(cat "$ROOT_DIR/.env" | grep -E '^WORKER_ENQUEUE_TOKEN=' | tail -n 1 | sed -E 's/^WORKER_ENQUEUE_TOKEN=//') || true
+  if [[ -n "$WORKER_ENQUEUE_TOKEN_RAW" ]]; then
+    WORKER_ENQUEUE_TOKEN=${WORKER_ENQUEUE_TOKEN_RAW%"}; WORKER_ENQUEUE_TOKEN=${WORKER_ENQUEUE_TOKEN#"}
+    WORKER_ENQUEUE_TOKEN=${WORKER_ENQUEUE_TOKEN%\'}; WORKER_ENQUEUE_TOKEN=${WORKER_ENQUEUE_TOKEN#\'}
+  fi
+fi
+
 if [[ -z "${DO_SSH:-}" ]]; then
   echo "❌ DO_SSH is not set in .env (e.g., DO_SSH=user@host)" >&2
   exit 1
@@ -34,6 +43,18 @@ fi
 
 read -r -d '' REMOTE_PATH_SCRIPT <<'REMOTE_SCRIPT'
 set -euo pipefail
+# If the deploy command provided WORKER_ENQUEUE_TOKEN via environment, ensure the remote .env contains a proper line
+if [[ -n "${WORKER_ENQUEUE_TOKEN:-}" ]]; then
+  # If .env exists, attempt to remove any broken/embedded token fragments and append a clean line
+  if [[ -f .env ]]; then
+    sed -E 's/WORKER_ENQUEUE_TOKEN=[^[:space:]]+//g' .env > .env.tmp || cp .env .env.tmp
+    printf "\nWORKER_ENQUEUE_TOKEN=%s\n" "${WORKER_ENQUEUE_TOKEN}" >> .env.tmp
+    mv .env.tmp .env
+  else
+    printf "WORKER_ENQUEUE_TOKEN=%s\n" "${WORKER_ENQUEUE_TOKEN}" > .env
+  fi
+  chmod 600 .env || true
+fi
 if [[ -n "${DO_WORKDIR:-}" && -d "$DO_WORKDIR" ]]; then
   cd "$DO_WORKDIR"
 else
@@ -95,7 +116,15 @@ if [[ -n "${DO_SSH_OPTS:-}" ]]; then
 fi
 
 if [[ -n "${DO_WORKDIR:-}" ]]; then
-  "${SSH_BASE[@]}" "$DO_SSH" "DO_WORKDIR='$DO_WORKDIR' bash -s" <<< "$REMOTE_PATH_SCRIPT"
+  if [[ -n "${WORKER_ENQUEUE_TOKEN:-}" ]]; then
+    "${SSH_BASE[@]}" "$DO_SSH" "WORKER_ENQUEUE_TOKEN='${WORKER_ENQUEUE_TOKEN}' DO_WORKDIR='$DO_WORKDIR' bash -s" <<< "$REMOTE_PATH_SCRIPT"
+  else
+    "${SSH_BASE[@]}" "$DO_SSH" "DO_WORKDIR='$DO_WORKDIR' bash -s" <<< "$REMOTE_PATH_SCRIPT"
+  fi
 else
-  "${SSH_BASE[@]}" "$DO_SSH" "bash -s" <<< "$REMOTE_PATH_SCRIPT"
+  if [[ -n "${WORKER_ENQUEUE_TOKEN:-}" ]]; then
+    "${SSH_BASE[@]}" "$DO_SSH" "WORKER_ENQUEUE_TOKEN='${WORKER_ENQUEUE_TOKEN}' bash -s" <<< "$REMOTE_PATH_SCRIPT"
+  else
+    "${SSH_BASE[@]}" "$DO_SSH" "bash -s" <<< "$REMOTE_PATH_SCRIPT"
+  fi
 fi

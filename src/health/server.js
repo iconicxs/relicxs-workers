@@ -3,6 +3,9 @@ const http = require('http');
 const { getWorkerHealth } = require('../resilience/health');
 const { registry } = require('../metrics/prometheus');
 const { MINIMAL_MODE } = require('../core/config');
+const { exec } = require('child_process');
+const { promisify } = require('util');
+const execp = promisify(exec);
 const { getRedisClient } = require('../core/redis');
 const { resolveQueueForJob } = require('../priorities/priority.router');
 
@@ -264,6 +267,50 @@ const server = http.createServer(async (req, res) => {
           res.end(JSON.stringify({ error: err.message }));
         }
       });
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  // Admin PM2 control endpoint (requires ADMIN_API_TOKEN)
+  // POST /admin/pm2 { action: 'stop'|'restart'|'reload'|'delete'|'start', name: '<pm2-name>' }
+  if (req.method === 'POST' && req.url === '/admin/pm2') {
+    try {
+      const adminToken = process.env.ADMIN_API_TOKEN;
+      if (!adminToken) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'admin API not enabled' }));
+        return;
+      }
+      const auth = req.headers.authorization || '';
+      if (!auth.startsWith('Bearer ') || auth.slice(7) !== adminToken) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'forbidden' }));
+        return;
+      }
+
+      const body = await readBody(req);
+      const action = (body && body.action) || '';
+      const name = (body && body.name) || '';
+      const allowed = new Set(['stop', 'restart', 'reload', 'start', 'delete', 'gracefulReload']);
+      if (!allowed.has(action) || !name) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'invalid_payload', allowed: Array.from(allowed) }));
+        return;
+      }
+
+      // Map gracefulReload to pm2 gracefulReload
+      const cmd = `pm2 ${action} ${name}`;
+      try {
+        const { stdout, stderr } = await execp(cmd);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true, cmd, stdout: String(stdout).slice(0, 2000), stderr: String(stderr).slice(0, 2000) }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'pm2_failed', message: err.message, stack: err.stack }));
+      }
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message }));
