@@ -94,4 +94,68 @@ const server = http.createServer(async (req, res) => {
           return;
         }
       } else {
-        // reject if no
+        // reject if no admin token configured (safer default)
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'admin API not enabled' }));
+        return;
+      }
+
+      // collect body
+      let body = '';
+      req.on('data', (chunk) => { body += chunk; });
+      req.on('end', async () => {
+        try {
+          const payload = JSON.parse(body || '{}');
+          const { namespace, priority, job } = payload;
+          const allowedNs = ['machinist', 'archivist'];
+          const allowedPr = ['instant', 'standard', 'batch'];
+          if (!allowedNs.includes(namespace) || !allowedPr.includes(priority) || typeof job !== 'object') {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'invalid payload; require namespace, priority, job' }));
+            return;
+          }
+
+          // dynamic require of the appropriate queue helper
+          const queuePath = `../queues/${namespace}/${priority}.queue`;
+          let queueHelper;
+          try {
+            queueHelper = require(queuePath);
+          } catch (err) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: `queue helper not found: ${queuePath}` }));
+            return;
+          }
+
+          // enqueue (may throw if validation fails)
+          await queueHelper.enqueue(job);
+          res.writeHead(202, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, queued: true }));
+        } catch (err) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+  if (req.method === 'GET' && req.url === '/metrics') {
+    try {
+      const metrics = await registry.metrics();
+      res.writeHead(200, { 'Content-Type': registry.contentType });
+      res.end(metrics);
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'text/plain' });
+      res.end(`# metrics error: ${err.message}\n`);
+    }
+    return;
+  }
+  res.writeHead(404);
+  res.end();
+});
+
+server.listen(PORT, () => console.log(`[HEALTH] Server listening on ${PORT}`));
+
+module.exports = { server };
