@@ -1,6 +1,6 @@
 const ValidationError = require('@errors/ValidationError');
 
-const EXT_WHITELIST = ['jpg', 'jpeg', 'png', 'tiff']; // same list, just kept here
+const EXT_WHITELIST = ['jpg', 'jpeg', 'png', 'tiff', 'tif']; // allow short TIFF extension
 const SAFE_EXTS = new Set(EXT_WHITELIST);
 const FILENAME_RE = /^[A-Za-z0-9_.-]+$/;
 
