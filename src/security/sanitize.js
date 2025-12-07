@@ -38,4 +38,5 @@ module.exports = {
   sanitizeTitle,
   sanitizeFilename,
   sanitizeExt,
-  sanitizeJ
+  sanitizeJson,
+};
