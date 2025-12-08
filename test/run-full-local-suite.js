@@ -13,7 +13,7 @@ const testLogger = createChildLogger({ suite: 'local-suite' });
 
 const { runMachinistPipeline } = require('@machinist/machinist.pipeline');
 const { runArchivistPipeline } = require('@archivist/archivist.pipeline');
-const { runJobgroupArchivist } = require('@archivist/archivist.batch');
+const { runJobgroupArchivist } = require('@archivist/handlers/archivist.jobgroup');
 const { pollOnce } = require('@archivist/archivist.jobgroup.poller');
 
 async function main() {

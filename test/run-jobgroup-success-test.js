@@ -13,7 +13,7 @@ const { supabase } = require('@core/supabase');
 const config = require('@config');
 const { logger } = require('@core/logger');
 
-const { runJobgroupArchivist } = require('@archivist/archivist.batch');
+const { runJobgroupArchivist } = require('@archivist/handlers/archivist.jobgroup');
 const { pollOnce } = require('../src/workers/archivist/archivist.jobgroup.poller');
 
 (async () => {

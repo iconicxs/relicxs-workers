@@ -41,7 +41,6 @@
     "@config": "src/core/config",
     "@startup": "src/startup",
     "@resilience": "src/resilience",
-    "@observability": "src/observability",
     "@machinist": "src/workers/machinist",
     "@archivist": "src/workers/archivist",
     "@events": "src/events",

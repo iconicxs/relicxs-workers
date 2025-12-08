@@ -1,5 +1,5 @@
 const { validateMachinistJob, validateImageBuffer, detectMime } = require('./machinist.utils');
-const { recordJobStart, recordJobEnd } = require('../../job-system/metrics');
+const { recordJobStart, recordJobEnd } = require('../../metrics/runtime');
 const { runMachinistPipeline } = require('./machinist.pipeline');
 const { withRetry } = require('../../resilience/retry');
 const { sendToDLQ } = require('../../resilience/dlq');

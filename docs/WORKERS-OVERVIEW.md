@@ -31,7 +31,7 @@ Queues are namespaced per worker to avoid cross-consumption:
 - Machinist
   - `jobs:machinist:instant`   → immediate processing
   - `jobs:machinist:standard`  → normal processing (lower priority)
-  - `jobs:machinist:batch`     → (reserved) batch grouping
+  - (batch not supported)
 - Archivist
   - `jobs:archivist:instant`   → immediate processing
   - `jobs:archivist:standard`  → normal processing
@@ -45,19 +45,8 @@ Use namespaced keys when enqueuing from the SaaS:
 await redis.lPush('jobs:archivist:instant', JSON.stringify(job))
 ```
 
-Legacy `jobs:instant|standard|jobgroup` are deprecated.
-
-### Migration from legacy queues
-
-If upgrading from shared queues, run the migration once:
-
-```
-npm run migrate:queues
-```
-
-This relocates items from legacy keys to namespaced keys using simple heuristics.
-- DLQ:
-  - `dlq:machinist`, `dlq:archivist`
+### DLQ
+ - `dlq:machinist`, `dlq:archivist`
 
 Each job is a JSON object with (minimum) fields:
 
@@ -214,13 +203,15 @@ Create assets → insert into asset (one row per file)
 
 Upload files → to B2 landing via your upload flow
 
-Enqueue machinist job → push to Redis queue:machinist
+Enqueue machinist job → push to the appropriate namespaced queue (e.g., `jobs:machinist:standard`)
 
 Wait for status:
 
 asset.status changes, asset_versions fill in
 
-Optionally, enqueue jobs into one of: jobs:instant | jobs:standard | jobs:jobgroup
+Enqueue using namespaced queues only:
+- Machinist: `jobs:machinist:instant` | `jobs:machinist:standard` (batch not supported)
+- Archivist: `jobs:archivist:instant` | `jobs:archivist:standard` | `jobs:archivist:jobgroup`
 
 Read ai_description once done
 
@@ -331,7 +322,7 @@ machinist – Machinist worker
 
 archivist – Archivist worker
 
-health-server – HTTP health endpoint
+endpoints-server – HTTP ops/health endpoint
 
 Useful scripts (in scripts/):
 
@@ -371,7 +362,7 @@ docs/WORKERS-OVERVIEW.md
 
 ---
 
-## 🧩 Wave 2E-C — (Optional but useful) Small client helper for your Next.js app
+## 🧩 Optional: Small client helper for your Next.js app
 
 This isn’t for `relicxs-workers`, but for your **Next.js SaaS repo**.  
 You don’t have to do it now, but here’s a nice clean adapter you can drop in.
@@ -383,50 +374,29 @@ You don’t have to do it now, but here’s a nice clean adapter you can drop in
 import { createClient } from 'redis';
 
 const redisUrl = process.env.REDIS_URL as string;
-if (!redisUrl) {
-  throw new Error('REDIS_URL is required for workers queue client');
-}
+if (!redisUrl) throw new Error('REDIS_URL is required');
 
 const redis = createClient({ url: redisUrl });
-redis.on('error', (err) => {
-  console.error('[workers-redis] error', err);
-});
-
+redis.on('error', (err) => console.error('[workers-redis] error', err));
 let connected: Promise<void> | null = null;
-async function ensureConnected() {
-  if (!connected) {
-    connected = redis.connect();
-  }
-  return connected;
-}
+async function ensureConnected() { connected ||= redis.connect(); return connected; }
 
 export type FilePurpose = 'preservation' | 'viewing' | 'production' | 'restoration';
-export type ProcessingType = 'instant' | 'standard' | 'batch';
+export type ProcessingType = 'instant' | 'standard' | 'batch'; // 'batch' maps to archivist jobgroup only
 
-export interface MachinistJob {
-  job_type: 'machinist';
-  tenant_id: string;
-  asset_id: string;
-  batch_id: string | null;
-  file_purpose: FilePurpose;
-}
+export interface MachinistJob { job_type: 'machinist'; tenant_id: string; asset_id: string; batch_id: string | null; file_purpose: FilePurpose; }
+export interface ArchivistJob { job_type: 'archivist'; tenant_id: string; asset_id: string; batch_id: string | null; processing_type: ProcessingType; }
 
-export interface ArchivistJob {
-  job_type: 'archivist';
-  tenant_id: string;
-  asset_id: string;
-  batch_id: string | null;
-  processing_type: ProcessingType;
-}
-
-export async function enqueueMachinistJob(job: MachinistJob) {
+export async function enqueueMachinist(job: MachinistJob, priority: ProcessingType = 'standard') {
   await ensureConnected();
-  await redis.lPush('queue:machinist', JSON.stringify(job));
+  const key = priority === 'instant' ? 'jobs:machinist:instant' : 'jobs:machinist:standard'; // machinist batch not supported
+  await redis.lPush(key, JSON.stringify(job));
 }
 
-export async function enqueueArchivistJob(job: ArchivistJob) {
+export async function enqueueArchivist(job: ArchivistJob, priority: ProcessingType = 'standard') {
   await ensureConnected();
-  await redis.lPush('queue:archivist', JSON.stringify(job));
+  const key = priority === 'instant' ? 'jobs:archivist:instant' : priority === 'batch' ? 'jobs:archivist:jobgroup' : 'jobs:archivist:standard';
+  await redis.lPush(key, JSON.stringify(job));
 }
 
 Then in your Next.js API route or server action, you can do:

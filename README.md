@@ -87,29 +87,18 @@ Queues are namespaced per worker to prevent cross-consumption:
 - Machinist:
 	- `jobs:machinist:instant`
 	- `jobs:machinist:standard`
-	- `jobs:machinist:batch`
 - Archivist:
 	- `jobs:archivist:instant`
 	- `jobs:archivist:standard`
 	- `jobs:archivist:jobgroup`
+
+Note: Machinist batch is not supported.
 
 Example enqueue (Archivist instant):
 
 ```
 await redis.lPush('jobs:archivist:instant', JSON.stringify(job))
 ```
-
-Legacy shared keys (`jobs:instant|standard|jobgroup`) are deprecated.
-
-### Migration from legacy queues
-
-Run once to move any pending items from legacy keys to namespaced keys:
-
-```
-npm run migrate:queues
-```
-
-Heuristics route jobs by `job_type`/`processing_type`/`file_purpose`. Unknown items are skipped.
 
 3. Scripts
 
@@ -142,7 +131,7 @@ machinist – Machinist worker
 
 archivist – Archivist worker
 
-health-server – HTTP health endpoint
+endpoints-server – HTTP ops/health endpoint
 
 Useful scripts (in scripts/):
 

@@ -20,7 +20,7 @@ function resolveQueueForJob(job) {
   if (type.startsWith('machinist')) {
     if (priority === PRIORITY.INSTANT) return MACHINIST.INSTANT;
     if (priority === PRIORITY.STANDARD) return MACHINIST.STANDARD;
-    return MACHINIST.BATCH;
+    throw new Error('[PRIORITY_ROUTER] Machinist batch priority is not supported');
   }
 
   if (type.startsWith('archivist')) {

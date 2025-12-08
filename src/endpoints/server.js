@@ -57,12 +57,9 @@ const server = http.createServer(async (req, res) => {
     }
     return;
   }
-  // Lightweight enqueue endpoint for admin console
-  // POST /enqueue  Authorization: Bearer <ENQUEUE_TOKEN>
-  // Body: { job_type: 'machinist', processing_type: 'instant'|'standard', tenant_id, batch_id, asset_id, file_purpose, original_extension }
+
   if (req.method === 'POST' && req.url === '/enqueue') {
     try {
-      // Auth
       const token = getBearerToken(req);
       const expected = process.env.ENQUEUE_TOKEN || process.env.WORKER_ENQUEUE_TOKEN;
       if (!expected || token !== expected) {
@@ -70,18 +67,24 @@ const server = http.createServer(async (req, res) => {
         return res.end(JSON.stringify({ error: 'unauthorized' }));
       }
 
-      // Read body
       let job = await readBody(req);
-
-      // Minimal validation
       if (!job || typeof job !== 'object') {
         res.writeHead(400, { 'content-type': 'application/json' });
         return res.end(JSON.stringify({ error: 'invalid_body' }));
       }
-      // Ensure job_type defaults to machinist if omitted
       if (!job.job_type && !job.type) job.job_type = 'machinist';
+      // Compatibility shim: normalize legacy processing_type 'batch' to 'jobgroup'
+      if (job && typeof job.processing_type === 'string' && job.processing_type.toLowerCase() === 'batch') {
+        job.processing_type = 'jobgroup';
+      }
+      // Explicitly reject machinist batch/jobgroup priorities
+      const jt = String(job.job_type || job.type || '').toLowerCase();
+      const pt = String(job.processing_type || job.processingType || '').toLowerCase();
+      if (jt.startsWith('machinist') && pt === 'jobgroup') {
+        res.writeHead(400, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'unsupported_priority', message: 'Machinist does not support batch/jobgroup priority' }));
+      }
 
-      // Resolve queue and enqueue
       let queue;
       try {
         queue = resolveQueueForJob(job);
@@ -104,9 +107,7 @@ const server = http.createServer(async (req, res) => {
       return res.end(JSON.stringify({ error: 'server_error', message: err && err.message }));
     }
   }
-  // ------------------------------
-  // Admin Queue Endpoints (token-protected)
-  // ------------------------------
+
   if (req.method === 'GET' && req.url.startsWith('/queues/overview')) {
     if (!isAuthorized(req)) {
       res.writeHead(401, { 'Content-Type': 'application/json' });
@@ -115,11 +116,11 @@ const server = http.createServer(async (req, res) => {
     try {
       const redis = await getRedisClient();
       const {
-        MACHINIST_QUEUE_INSTANT, MACHINIST_QUEUE_STANDARD, MACHINIST_QUEUE_JOBGROUP,
+        MACHINIST_QUEUE_INSTANT, MACHINIST_QUEUE_STANDARD,
         ARCHIVIST_QUEUE_INSTANT, ARCHIVIST_QUEUE_STANDARD, ARCHIVIST_QUEUE_JOBGROUP,
       } = require('../priorities/priority.constants');
       const keys = [
-        MACHINIST_QUEUE_INSTANT, MACHINIST_QUEUE_STANDARD, MACHINIST_QUEUE_JOBGROUP,
+        MACHINIST_QUEUE_INSTANT, MACHINIST_QUEUE_STANDARD,
         ARCHIVIST_QUEUE_INSTANT, ARCHIVIST_QUEUE_STANDARD, ARCHIVIST_QUEUE_JOBGROUP,
         'dlq:machinist', 'image-processing:failed', 'image-processing:retry',
       ];
@@ -135,6 +136,7 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  // DLQ endpoints (admin console compatibility)
   if (req.method === 'GET' && req.url.startsWith('/queues/dlq')) {
     if (!isAuthorized(req)) {
       res.writeHead(401, { 'Content-Type': 'application/json' });
@@ -213,10 +215,22 @@ const server = http.createServer(async (req, res) => {
       return res.end(JSON.stringify({ error: err.message }));
     }
   }
-  // Admin enqueue endpoint (basic scaffold)
+
+  if (req.method === 'GET' && req.url === '/metrics') {
+    try {
+      const metrics = await registry.metrics();
+      res.writeHead(200, { 'Content-Type': registry.contentType });
+      res.end(metrics);
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'text/plain' });
+      res.end(`# metrics error: ${err.message}\n`);
+    }
+    return;
+  }
+
+  // Admin enqueue endpoint (basic scaffold — preserved for console compatibility)
   if (req.method === 'POST' && req.url === '/admin/jobs') {
     try {
-      // simple token auth: set ADMIN_API_TOKEN in env to enable
       const adminToken = process.env.ADMIN_API_TOKEN;
       if (adminToken) {
         const auth = req.headers.authorization || '';
@@ -226,13 +240,11 @@ const server = http.createServer(async (req, res) => {
           return;
         }
       } else {
-        // reject if no admin token configured (safer default)
         res.writeHead(403, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'admin API not enabled' }));
         return;
       }
 
-      // collect body
       let body = '';
       req.on('data', (chunk) => { body += chunk; });
       req.on('end', async () => {
@@ -240,15 +252,22 @@ const server = http.createServer(async (req, res) => {
           const payload = JSON.parse(body || '{}');
           const { namespace, priority, job } = payload;
           const allowedNs = ['machinist', 'archivist'];
-          const allowedPr = ['instant', 'standard', 'batch'];
+          const allowedPr = ['instant', 'standard', 'batch', 'jobgroup'];
           if (!allowedNs.includes(namespace) || !allowedPr.includes(priority) || typeof job !== 'object') {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: 'invalid payload; require namespace, priority, job' }));
             return;
           }
 
-          // dynamic require of the appropriate queue helper
-          const queuePath = `../queues/${namespace}/${priority}.queue`;
+          // Map deprecated batch to jobgroup for archivist
+          const pr = (namespace === 'archivist' && priority === 'batch') ? 'jobgroup' : priority;
+          if (namespace === 'machinist' && (pr === 'batch' || pr === 'jobgroup')) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'unsupported_priority', message: 'Machinist does not support batch/jobgroup' }));
+            return;
+          }
+
+          const queuePath = `../queues/${namespace}/${pr}.queue`;
           let queueHelper;
           try {
             queueHelper = require(queuePath);
@@ -258,7 +277,6 @@ const server = http.createServer(async (req, res) => {
             return;
           }
 
-          // enqueue (may throw if validation fails)
           await queueHelper.enqueue(job);
           res.writeHead(202, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: true, queued: true }));
@@ -274,8 +292,6 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Admin PM2 control endpoint (relaxed auth: accepts ADMIN_API_TOKEN or ENQUEUE/WOKRER tokens)
-  // POST /admin/pm2 { action: 'stop'|'restart'|'reload'|'delete'|'start', name: '<pm2-name>' }
   if (req.method === 'POST' && req.url === '/admin/pm2') {
     try {
       if (!isAuthorized(req)) {
@@ -286,7 +302,9 @@ const server = http.createServer(async (req, res) => {
 
       const body = await readBody(req);
       const action = (body && body.action) || '';
-      const name = (body && body.name) || '';
+      let name = (body && body.name) || '';
+      // Back-compat: allow old process name
+      if (name === 'health-server') name = 'endpoints-server';
       const allowed = new Set(['stop', 'restart', 'reload', 'start', 'delete', 'gracefulReload']);
       if (!allowed.has(action) || !name) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -294,7 +312,6 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      // Map gracefulReload to pm2 gracefulReload
       const cmd = `pm2 ${action} ${name}`;
       try {
         const { stdout, stderr } = await execp(cmd);
@@ -310,8 +327,7 @@ const server = http.createServer(async (req, res) => {
     }
     return;
   }
-  // Admin PM2 list endpoint (relaxed auth: accepts ADMIN_API_TOKEN or ENQUEUE/WORKER tokens)
-  // GET /admin/pm2/list -> returns array of processes with minimal fields
+
   if (req.method === 'GET' && req.url === '/admin/pm2/list') {
     try {
       if (!isAuthorized(req)) {
@@ -332,7 +348,7 @@ const server = http.createServer(async (req, res) => {
           restarts: p.pm2_env && p.pm2_env.restart_time,
           uptime: p.pm2_env && p.pm2_env.pm_uptime,
           cpu: p.monit && p.monit.cpu,
-          memory: p.monit && p.monit.memory,
+          memory: p.pm2_env && p.pm2_env.memory,
           version: p.pm2_env && p.pm2_env.version,
         }));
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -347,21 +363,11 @@ const server = http.createServer(async (req, res) => {
     }
     return;
   }
-  if (req.method === 'GET' && req.url === '/metrics') {
-    try {
-      const metrics = await registry.metrics();
-      res.writeHead(200, { 'Content-Type': registry.contentType });
-      res.end(metrics);
-    } catch (err) {
-      res.writeHead(500, { 'Content-Type': 'text/plain' });
-      res.end(`# metrics error: ${err.message}\n`);
-    }
-    return;
-  }
+
   res.writeHead(404);
   res.end();
 });
 
-server.listen(PORT, () => console.log(`[HEALTH] Server listening on ${PORT}`));
+server.listen(PORT, () => console.log(`[ENDPOINTS] Server listening on ${PORT}`));
 
 module.exports = { server };

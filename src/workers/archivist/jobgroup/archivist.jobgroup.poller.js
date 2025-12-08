@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const OpenAI = require('openai');
 const config = require('@config');
-const { withRetry } = require('../../resilience/retry');
+const { withRetry } = require('../../../resilience/retry');
 const {
   getActiveJobgroups,
   updateJobgroupStatus,
@@ -11,24 +11,18 @@ const {
   upsertAiDescription,
   hasJobgroupResult,
   getJobgroupResultsCount,
-} = require('./archivist.db');
-const { safeJsonParse, normalizeAiPayloadFromModel } = require('./archivist.utils');
+} = require('../data/archivist.db');
+const { safeJsonParse, normalizeAiPayloadFromModel } = require('../archivist.utils');
 const { emitJobgroupCompleted, emitJobgroupFailed } = require('@events/jobgroup.events');
 const { writeJobgroupAudit } = require('@logs/jobgroup-logger');
-const { withRedis } = require('../../core/redis');
-const { sendToDLQ } = require('../../resilience/dlq');
+const { withRedis } = require('../../../core/redis');
+const { sendToDLQ } = require('../../../resilience/dlq');
 
-// Adaptive polling: faster when there are active jobgroups, slower when idle
-const ACTIVE_POLL_INTERVAL = parseInt(process.env.JOBGROUP_POLL_ACTIVE_INTERVAL_MS || process.env.JOBGROUP_POLL_INTERVAL_MS || '300000', 10); // default 5m
-const IDLE_POLL_INTERVAL = parseInt(process.env.JOBGROUP_POLL_IDLE_INTERVAL_MS || '300000', 10); // default 5m
+const ACTIVE_POLL_INTERVAL = parseInt(process.env.JOBGROUP_POLL_ACTIVE_INTERVAL_MS || process.env.JOBGROUP_POLL_INTERVAL_MS || '300000', 10);
+const IDLE_POLL_INTERVAL = parseInt(process.env.JOBGROUP_POLL_IDLE_INTERVAL_MS || '300000', 10);
 const POLLER_LOCK_KEY = 'jobgroup_poller_lock';
-// Extended TTL to handle large output processing windows safely
 const POLLER_LOCK_TTL_SEC = parseInt(process.env.JOBGROUP_POLL_LOCK_TTL_SEC || '900', 10);
 
-/**
- * Acquire a distributed poller lock to ensure only one instance runs.
- * @returns {Promise<boolean>} true if lock acquired, false otherwise
- */
 async function acquirePollerLock(logger) {
   try {
     const res = await withRedis((c) => c.set(POLLER_LOCK_KEY, String(Date.now()), { NX: true, EX: POLLER_LOCK_TTL_SEC }));
@@ -37,13 +31,10 @@ async function acquirePollerLock(logger) {
     return ok;
   } catch (err) {
     logger.warn({ err }, '[JOBGROUP] Failed to acquire poller lock; proceeding without lock');
-    return true; // fail-open to avoid halting
+    return true;
   }
 }
 
-/**
- * Release the distributed poller lock.
- */
 async function releasePollerLock(logger) {
   try {
     await withRedis((c) => c.del(POLLER_LOCK_KEY));
@@ -52,9 +43,6 @@ async function releasePollerLock(logger) {
   }
 }
 
-/**
- * Refresh the distributed poller lock TTL to prevent expiry mid-run.
- */
 async function refreshPollerLock(logger) {
   try {
     await withRedis((c) => c.expire(POLLER_LOCK_KEY, POLLER_LOCK_TTL_SEC));
@@ -63,15 +51,6 @@ async function refreshPollerLock(logger) {
   }
 }
 
-/**
- * Process a single output object from the OpenAI batch JSONL file.
- * Performs idempotency check and writes ai_description + jobgroup_results.
- * @param {any} obj Parsed JSONL line object
- * @param {any} jobgroup Jobgroup row
- * @param {import('pino').Logger} logger
- * @param {OpenAI | null} client
- * @returns {Promise<boolean>} true if processed, false if skipped
- */
 async function processOneOutputObject(obj, jobgroup, logger, client) {
   try {
     const customId = obj.custom_id || '';
@@ -157,20 +136,13 @@ async function processCompletedJobgroup(logger, client, jobgroup) {
     text = await res.text();
   }
   const lines = text.split('\n').filter(Boolean);
-  const objects = lines.map((l) => {
-    try { return JSON.parse(l); } catch (_) { return null; }
-  }).filter(Boolean);
+  const objects = lines.map((l) => { try { return JSON.parse(l); } catch (_) { return null; } }).filter(Boolean);
 
-  // Jobgroup-level idempotency: if all results already exist, short-circuit
   try {
     const existingCount = await getJobgroupResultsCount(jobgroup.id);
     if (existingCount && existingCount === objects.length) {
       logger.info({ jobgroup_id: jobgroup.id, existingCount }, '[JOBGROUP] All results already present; completing');
-      await updateJobgroupStatus(jobgroup.id, {
-        status: 'completed',
-        completed_at: new Date().toISOString(),
-        notes: { processed: existingCount, shortcut: 'already_complete' },
-      });
+      await updateJobgroupStatus(jobgroup.id, { status: 'completed', completed_at: new Date().toISOString(), notes: { processed: existingCount, shortcut: 'already_complete' } });
       emitJobgroupCompleted(jobgroup);
       try { writeJobgroupAudit({ event: 'completed', jobgroup_id: jobgroup.id, processed: existingCount, shortcut: true }); } catch (_) {}
       return;
@@ -179,16 +151,11 @@ async function processCompletedJobgroup(logger, client, jobgroup) {
     logger.warn({ err: e, jobgroup_id: jobgroup.id }, '[JOBGROUP] Idempotency count check failed; proceeding');
   }
 
-  // Chunk processing for concurrency control
   const chunkSize = 25;
-  let processed = 0;
-  let failed = 0;
-  let skipped = 0;
+  let processed = 0, failed = 0, skipped = 0;
   for (let i = 0; i < objects.length; i += chunkSize) {
     const chunk = objects.slice(i, i + chunkSize);
-    const results = await Promise.allSettled(
-      chunk.map((obj) => processOneOutputObject(obj, jobgroup, logger, client))
-    );
+    const results = await Promise.allSettled(chunk.map((obj) => processOneOutputObject(obj, jobgroup, logger, client)));
     for (const r of results) {
       if (r.status === 'fulfilled') {
         if (r.value === 'processed') processed += 1;
@@ -198,42 +165,30 @@ async function processCompletedJobgroup(logger, client, jobgroup) {
         failed += 1;
       }
     }
-    // keep the global poller lock alive while processing large batches
     await refreshPollerLock(logger);
   }
 
   if (failed > 0) {
-    await updateJobgroupStatus(jobgroup.id, {
-      status: 'failed',
-      failed_at: new Date().toISOString(),
-      notes: { processed, failed, skipped },
-    });
+    await updateJobgroupStatus(jobgroup.id, { status: 'failed', failed_at: new Date().toISOString(), notes: { processed, failed, skipped } });
     const updated = { ...jobgroup, status: 'failed' };
     emitJobgroupFailed(updated);
     try { writeJobgroupAudit({ event: 'failed', jobgroup_id: jobgroup.id, processed, failed, skipped }); } catch (_) {}
   } else {
-    await updateJobgroupStatus(jobgroup.id, {
-      status: 'completed',
-      completed_at: new Date().toISOString(),
-      notes: { processed, skipped },
-    });
+    await updateJobgroupStatus(jobgroup.id, { status: 'completed', completed_at: new Date().toISOString(), notes: { processed, skipped } });
     emitJobgroupCompleted(jobgroup);
     try { writeJobgroupAudit({ event: 'completed', jobgroup_id: jobgroup.id, processed, skipped }); } catch (_) {}
   }
 }
 
-// Returns true if any active jobgroups were found/processed
 async function pollOnce(logger) {
   const gotLock = await acquirePollerLock(logger);
   if (!gotLock) return;
   try {
-    // DRY RUN: skip all work
     if (config.dryRun) {
       logger.warn('[DRY_RUN] Poller skipped — dry-run mode.');
       return;
     }
 
-    // MOCK MODE: never call OpenAI, require output_file_id
     if (config.openaiMockDirectory) {
       const active = await getActiveJobgroups();
       if (!active.length) return false;
@@ -248,7 +203,6 @@ async function pollOnce(logger) {
       return true;
     }
 
-    // REAL MODE: check OpenAI batch status
     const client = new OpenAI({ apiKey: config.openai.apiKey });
     const active = await getActiveJobgroups();
     if (!active.length) return false;
@@ -257,7 +211,6 @@ async function pollOnce(logger) {
     for (const jg of active) {
       const batch = await client.batches.retrieve(jg.openai_batch_id);
       if (batch.status === 'completed') {
-        // persist output file id only; mark completed after processing
         await updateJobgroupStatus(jg.id, { output_file_id: batch.output_file_id });
         await processCompletedJobgroup(logger, client, { ...jg, output_file_id: batch.output_file_id });
       } else if (batch.status === 'failed' || batch.status === 'expired') {
@@ -290,7 +243,6 @@ function startJobgroupPolling(logger) {
     }, delay);
   };
 
-  // Kick off initial poll, then schedule based on result
   (async () => {
     let hadActive = false;
     try {

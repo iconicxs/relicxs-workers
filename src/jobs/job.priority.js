@@ -27,7 +27,7 @@ function getJobPriority(job) {
   const p = String(raw).toLowerCase();
   if (p === 'instant' || p === 'individual') return PRIORITY.INSTANT;
   if (p === 'standard') return PRIORITY.STANDARD;
-  if (p === 'jobgroup' || p === 'batch') return PRIORITY.BATCH;
+  if (p === 'jobgroup') return PRIORITY.BATCH;
   return PRIORITY.STANDARD;
 }
 

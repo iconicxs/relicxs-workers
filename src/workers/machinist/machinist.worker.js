@@ -4,11 +4,10 @@ const { initializeWorkerEnvironment } = require('../../startup/initialize');
 const { getRedisClient } = require('../../core/redis');
 const { processInstantMachinistJob } = require('./machinist.instant');
 const { processStandardMachinistJob } = require('./machinist.standard');
-const { processBatchMachinistJob } = require('./machinist.batch');
-const { MACHINIST_QUEUE_INSTANT, MACHINIST_QUEUE_STANDARD, MACHINIST_QUEUE_JOBGROUP } = require('../../priorities/priority.constants');
+const { MACHINIST_QUEUE_INSTANT, MACHINIST_QUEUE_STANDARD } = require('../../priorities/priority.constants');
 const { DLQ_QUEUE } = require('../dlq/dlq.constants');
 
-const LISTEN_QUEUES = [MACHINIST_QUEUE_INSTANT, MACHINIST_QUEUE_STANDARD, MACHINIST_QUEUE_JOBGROUP];
+const LISTEN_QUEUES = [MACHINIST_QUEUE_INSTANT, MACHINIST_QUEUE_STANDARD];
 const BRPOP_TIMEOUT_SECONDS = 30;
 
 /**
@@ -56,8 +55,6 @@ async function startMachinistWorker(logger) {
           await processInstantMachinistJob(logger, parsedJob);
         } else if (key === MACHINIST_QUEUE_STANDARD) {
           await processStandardMachinistJob(logger, parsedJob);
-        } else if (key === MACHINIST_QUEUE_JOBGROUP) {
-          await processBatchMachinistJob(logger, parsedJob);
         }
       } catch (jobErr) {
         logger.error(

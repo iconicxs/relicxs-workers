@@ -2,25 +2,18 @@ const fs = require('fs');
 const path = require('path');
 const OpenAI = require('openai');
 const config = require('@config');
-const { PROCESSING_CONFIG, validateArchivistJob } = require('./archivist.utils');
-const { pollOnce } = require('./archivist.jobgroup.poller');
-const { buildJobgroupJsonlFile } = require('./jobgroup/jobgroup-jsonl-builder');
-const { createJobgroup, getRecentJobgroupsForTenant } = require('./archivist.db');
+const { PROCESSING_CONFIG, validateArchivistJob } = require('../archivist.utils');
+const { pollOnce } = require('../jobgroup/archivist.jobgroup.poller');
+const { buildJobgroupJsonlFile } = require('../jobgroup/jobgroup-jsonl-builder');
+const { createJobgroup, getRecentJobgroupsForTenant } = require('../data/archivist.db');
 const { emitJobgroupCreated } = require('@events/jobgroup.events');
 const { writeJobgroupAudit } = require('@logs/jobgroup-logger');
-const { recordJobStart, recordJobEnd } = require('../../job-system/metrics');
-const { sendToDLQ } = require('../../resilience/dlq');
-const { withRetry } = require('../../resilience/retry');
-const { logger: rootLogger } = require('../../core/logger');
-const { logStart, logEnd, logFailure } = require('../../resilience/logging');
+const { recordJobStart, recordJobEnd } = require('../../../metrics/runtime');
+const { sendToDLQ } = require('../../../resilience/dlq');
+const { withRetry } = require('../../../resilience/retry');
+const { logger: rootLogger } = require('../../../core/logger');
+const { logStart, logEnd, logFailure } = require('../../../resilience/logging');
 
-/**
- * Create an OpenAI Batch (jobgroup) for a set of jobs.
- * @param {object} params
- * @param {import('pino').Logger} params.logger
- * @param {Array} params.jobs
- * @param {string} params.workDir
- */
 async function runJobgroupArchivist({ logger, jobs, workDir }) {
   const validJobs = jobs.map(validateArchivistJob);
   logger.info(`Starting Archivist Jobgroup: ${validJobs.length} items`);
@@ -36,7 +29,6 @@ async function runJobgroupArchivist({ logger, jobs, workDir }) {
     };
   }
 
-  // Throttling: block if tenant has active/too many recent jobgroups
   const tenantId = validJobs[0].tenant_id;
   const recent = await getRecentJobgroupsForTenant(tenantId);
   const active = recent.filter((j) => ['queued', 'in_progress', 'validating', 'created'].includes(j.status));
@@ -48,13 +40,12 @@ async function runJobgroupArchivist({ logger, jobs, workDir }) {
     throw new Error('Rate limit: max 5 jobgroups in 24h reached');
   }
 
-  // Ensure workDir exists (fallback to OS temp if not provided)
   const os = require('os');
   const p = require('path');
-  const fs = require('fs');
+  const fsx = require('fs');
   const tenantForDir = (validJobs[0] && validJobs[0].tenant_id) ? validJobs[0].tenant_id : 'tenant';
   const resolvedWorkDir = workDir || p.join(os.tmpdir(), `archivist-jobgroup-${tenantForDir}-${Date.now()}`);
-  try { fs.mkdirSync(resolvedWorkDir, { recursive: true, mode: 0o700 }); } catch (_) {}
+  try { fsx.mkdirSync(resolvedWorkDir, { recursive: true, mode: 0o700 }); } catch (_) {}
 
   const { jsonlPath, requestsCount } = await buildJobgroupJsonlFile({ jobs: validJobs, workDir: resolvedWorkDir });
   logger.info(`Created jobgroup JSONL with ${requestsCount} entries`);
@@ -66,7 +57,6 @@ async function runJobgroupArchivist({ logger, jobs, workDir }) {
     purpose: 'batch',
   });
 
-  // derive batch from first job (homogeneous group)
   const batchId = validJobs[0].batch_id || null;
 
   const jobgroup = await client.batches.create({
@@ -77,7 +67,6 @@ async function runJobgroupArchivist({ logger, jobs, workDir }) {
   });
 
   logger.info(`Jobgroup created: ${jobgroup.id}`);
-  // persist jobgroup metadata
   const created = await createJobgroup({
     tenantId,
     batchId,
@@ -90,14 +79,9 @@ async function runJobgroupArchivist({ logger, jobs, workDir }) {
 
   emitJobgroupCreated(created);
   try {
-    writeJobgroupAudit({
-      event: 'created',
-      jobgroup_id: created.id,
-      openai_batch_id: created.openai_batch_id,
-    });
+    writeJobgroupAudit({ event: 'created', jobgroup_id: created.id, openai_batch_id: created.openai_batch_id });
   } catch (_) {}
 
-  // Kick the poller to reduce latency from idle state
   try { await pollOnce(logger); } catch (_) {}
 
   return { jobgroup_id: created.id, openai_batch_id: jobgroup.id, input_file_id: inputFile.id, status: jobgroup.status, requestsCount };
@@ -105,11 +89,6 @@ async function runJobgroupArchivist({ logger, jobs, workDir }) {
 
 module.exports = { PROCESSING_CONFIG, runJobgroupArchivist };
 
-/**
- * Metrics-wrapped batch jobgroup handler.
- * @param {import('pino').Logger} logger
- * @param {{ jobs: any[], workDir?: string, priority?: string, id?: string }} rawJobGroup
- */
 async function processBatchArchivistJob(logger, rawJobGroup) {
   const job = { ...(rawJobGroup || {}), type: 'archivist.batch', priority: rawJobGroup?.priority || 'batch' };
   try { await recordJobStart(job); } catch (_) {}

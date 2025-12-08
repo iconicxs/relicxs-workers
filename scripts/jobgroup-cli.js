@@ -8,7 +8,7 @@ const OpenAI = require('openai');
 const config = require('@config');
 const { logger } = require('@core/logger');
 const { supabase } = require('../src/core/supabase');
-const { runJobgroupArchivist } = require('../src/workers/archivist/archivist.batch');
+const { runJobgroupArchivist } = require('../src/workers/archivist/handlers/archivist.jobgroup');
 const { fileExists } = require('../src/core/storage');
 
 async function createJobgroupCLI(tenantId, batchId, mode) {

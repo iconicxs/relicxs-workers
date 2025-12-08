@@ -1,22 +1,17 @@
 const { validateArchivistJob } = require('@schema/job-schemas');
-const { runArchivistPipeline } = require('./archivist.pipeline');
-const { runJobgroupArchivist } = require('./archivist.batch');
-const config = require('../../core/config');
+const { runArchivistPipeline } = require('../archivist.pipeline');
+const { runJobgroupArchivist } = require('./archivist.jobgroup');
+const config = require('../../../core/config');
 const os = require('os');
 const path = require('path');
 const fse = require('fs-extra');
-const { withRetry } = require('../../resilience/retry');
-const { sendToDLQ } = require('../../resilience/dlq');
-const { logStart, logEnd, logFailure } = require('../../resilience/logging');
-const { updateBatchStatus } = require('../../resilience/batch-status');
-const { wrap } = require('../../errors/wrap');
-const { recordJobStart, recordJobEnd } = require('../../job-system/metrics');
+const { withRetry } = require('../../../resilience/retry');
+const { sendToDLQ } = require('../../../resilience/dlq');
+const { logStart, logEnd, logFailure } = require('../../../resilience/logging');
+const { updateBatchStatus } = require('../../../resilience/batch-status');
+const { wrap } = require('../../../errors/wrap');
+const { recordJobStart, recordJobEnd } = require('../../../metrics/runtime');
 
-/**
- * Process a single AI analysis job immediately via Archivist pipeline with resilience.
- * @param {import('pino').Logger} logger
- * @param {any} rawJob
- */
 async function processInstantArchivistJob(logger, rawJob) {
   const job = validateArchivistJob(rawJob);
   try { await recordJobStart(job); } catch (_) {}

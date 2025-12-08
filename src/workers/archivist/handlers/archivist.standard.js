@@ -1,17 +1,12 @@
 const { validateArchivistJob } = require('@schema/job-schemas');
-const { runArchivistPipeline } = require('./archivist.pipeline');
-const { withRetry } = require('../../resilience/retry');
-const wrap = require('../../errors/wrap');
-const config = require('../../core/config');
-const { recordJobStart, recordJobEnd } = require('../../job-system/metrics');
-const { sendToDLQ } = require('../../resilience/dlq');
-const { logStart, logEnd, logFailure } = require('../../resilience/logging');
+const { runArchivistPipeline } = require('../archivist.pipeline');
+const { withRetry } = require('../../../resilience/retry');
+const wrap = require('../../../errors/wrap');
+const config = require('../../../core/config');
+const { recordJobStart, recordJobEnd } = require('../../../metrics/runtime');
+const { sendToDLQ } = require('../../../resilience/dlq');
+const { logStart, logEnd, logFailure } = require('../../../resilience/logging');
 
-/**
- * Placeholder STANDARD Archivist processor.
- * Later this will run non-batch AI analysis (non-OpenAI Batch),
- * but for now it only validates, logs, and exits cleanly.
- */
 async function processStandardArchivistJob(logger, rawJob) {
   const job = validateArchivistJob(rawJob);
 

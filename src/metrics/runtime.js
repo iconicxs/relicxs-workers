@@ -1,5 +1,5 @@
 const { getRedisClient } = require('../core/redis');
-const { runningJobs, jobDuration } = require('../metrics/prometheus');
+const { runningJobs, jobDuration } = require('./prometheus');
 
 function deriveJobKey(job) {
   if (job && job.id) return String(job.id);
@@ -13,9 +13,6 @@ function deriveJobKey(job) {
   return composite;
 }
 
-/**
- * Record start of job execution.
- */
 async function recordJobStart(job) {
   const redis = await getRedisClient();
   const runningKey = `metrics:${job.priority}:running`;
@@ -29,9 +26,6 @@ async function recordJobStart(job) {
   try { runningJobs.labels(worker, priority).inc(); } catch (_) {}
 }
 
-/**
- * Record end of job execution + calculate duration.
- */
 async function recordJobEnd(job) {
   const redis = await getRedisClient();
   const runningKey = `metrics:${job.priority}:running`;
@@ -53,9 +47,6 @@ async function recordJobEnd(job) {
   try { jobDuration.labels((job && job.job_type) ? (String(job.job_type).split('.')[0] || 'unknown') : 'unknown', job && job.priority ? job.priority : 'unknown').observe(duration / 1000); } catch (_) {}
 }
 
-/**
- * Average duration of recent jobs.
- */
 async function getAvgDuration(priority) {
   const redis = await getRedisClient();
   const values = await redis.lRange(
@@ -70,18 +61,8 @@ async function getAvgDuration(priority) {
   return Math.round(sum / values.length);
 }
 
-/**
- * Queue depth per priority.
- */
-async function getQueueDepth(priority) {
-  const redis = await getRedisClient();
-  // queues are canonically jobs:instant|standard|jobgroup
-  return redis.lLen(`jobs:${priority}`);
-}
-
 module.exports = {
   recordJobStart,
   recordJobEnd,
   getAvgDuration,
-  getQueueDepth,
 };

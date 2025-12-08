@@ -9,7 +9,6 @@ moduleAlias.addAliases({
   "@config": path.join(__dirname, "core/config"),
   "@startup": path.join(__dirname, "startup"),
   "@resilience": path.join(__dirname, "resilience"),
-  "@observability": path.join(__dirname, "observability"),
   "@machinist": path.join(__dirname, "workers/machinist"),
   "@archivist": path.join(__dirname, "workers/archivist"),
   "@events": path.join(__dirname, "events"),

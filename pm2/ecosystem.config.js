@@ -25,8 +25,8 @@ module.exports = {
       env_production: { NODE_ENV: 'production' }
     },
     {
-      name: 'health-server',
-      script: 'src/health/server.js',
+      name: 'endpoints-server',
+      script: 'src/endpoints/server.js',
       cwd: '/var/www/relicxs-workers',
       instances: 1,
       autorestart: true,

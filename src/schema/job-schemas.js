@@ -66,8 +66,7 @@ function validateArchivistJob(job) {
   assertIn('processing_type', job.processing_type, [
     'instant',
     'standard',
-    'jobgroup',
-    'batch' // legacy alias
+    'jobgroup'
   ]);
 
   return job;

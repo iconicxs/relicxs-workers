@@ -1,12 +1,5 @@
-/**
- * Supabase DB helpers for ai_description upsert and telemetry.
- */
-const { supabase } = require('../../core/supabase');
+const { supabase } = require('../../../core/supabase');
 
-/**
- * Upsert ai_description by (tenant_id, asset_id).
- * @param {object} payload
- */
 async function upsertAiDescription(payload) {
   const { data, error } = await supabase
     .from('ai_description')
@@ -17,12 +10,6 @@ async function upsertAiDescription(payload) {
   return data && data[0];
 }
 
-/**
- * Patch notes (telemetry) for an ai_description row.
- * @param {string} tenantId
- * @param {string} assetId
- * @param {object} notes
- */
 async function updateAiDescriptionNotes(tenantId, assetId, notes) {
   const { error } = await supabase
     .from('ai_description')
@@ -34,9 +21,6 @@ async function updateAiDescriptionNotes(tenantId, assetId, notes) {
 
 module.exports = { upsertAiDescription, updateAiDescriptionNotes };
 
-/**
- * Create a jobgroup record.
- */
 async function createJobgroup({ tenantId, batchId, openaiBatchId, inputFileId, status, requestCount, notes }) {
   const payload = {
     tenant_id: tenantId,
@@ -52,18 +36,12 @@ async function createJobgroup({ tenantId, batchId, openaiBatchId, inputFileId, s
   return data;
 }
 
-/**
- * Update jobgroup status by id.
- */
 async function updateJobgroupStatus(jobgroupId, patch) {
   const { data, error } = await supabase.from('jobgroups').update(patch).eq('id', jobgroupId).select('*').single();
   if (error) throw new Error(`[ARCHIVIST][DB] updateJobgroupStatus failed: ${error.message}`);
   return data;
 }
 
-/**
- * Get jobgroups that are not yet completed/failed.
- */
 async function getActiveJobgroups() {
   const { data, error } = await supabase
     .from('jobgroups')
@@ -73,9 +51,6 @@ async function getActiveJobgroups() {
   return data || [];
 }
 
-/**
- * Upsert a jobgroup result record for an asset.
- */
 async function upsertJobgroupResult({ jobgroupId, tenantId, assetId, batchId, customId, status, rawResponse, errorCode, errorMessage, startedAt, completedAt }) {
   const payload = {
     jobgroup_id: jobgroupId,
@@ -99,9 +74,6 @@ async function upsertJobgroupResult({ jobgroupId, tenantId, assetId, batchId, cu
   return data;
 }
 
-/**
- * Fetch asset by id.
- */
 async function getAssetById(assetId) {
   const { data, error } = await supabase.from('asset').select('*').eq('id', assetId).single();
   if (error) throw new Error(`[ARCHIVIST][DB] getAssetById failed: ${error.message}`);
@@ -114,12 +86,6 @@ module.exports.getActiveJobgroups = getActiveJobgroups;
 module.exports.upsertJobgroupResult = upsertJobgroupResult;
 module.exports.getAssetById = getAssetById;
 
-/**
- * Check if a jobgroup result already exists for a given asset.
- * @param {string} jobgroupId
- * @param {string} assetId
- * @returns {Promise<boolean>}
- */
 async function hasJobgroupResult(jobgroupId, assetId) {
   const { data, error } = await supabase
     .from('jobgroup_results')
@@ -133,27 +99,6 @@ async function hasJobgroupResult(jobgroupId, assetId) {
 
 module.exports.hasJobgroupResult = hasJobgroupResult;
 
-/**
- * Get recent jobgroups (limit 50) for throttling decisions for a tenant.
- */
-async function getRecentJobgroupsForTenant(tenantId) {
-  const { data, error } = await supabase
-    .from('jobgroups')
-    .select('*')
-    .eq('tenant_id', tenantId)
-    .order('created_at', { ascending: false })
-    .limit(50);
-  if (error) throw new Error(`[ARCHIVIST][DB] getRecentJobgroupsForTenant failed: ${error.message}`);
-  return data || [];
-}
-
-module.exports.getRecentJobgroupsForTenant = getRecentJobgroupsForTenant;
-
-/**
- * Get count of results for a jobgroup.
- * @param {string} jobgroupId
- * @returns {Promise<number>}
- */
 async function getJobgroupResultsCount(jobgroupId) {
   const { count, error } = await supabase
     .from('jobgroup_results')

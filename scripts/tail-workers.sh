@@ -1,2 +1,2 @@
 #!/bin/bash
-pm2 logs machinist-worker archivist-worker health-server
+pm2 logs machinist-worker archivist-worker endpoints-server

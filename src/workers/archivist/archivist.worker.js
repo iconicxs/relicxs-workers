@@ -4,20 +4,12 @@ const path = require('path');
 const { initializeWorkerEnvironment } = require('../../startup/initialize');
 const { instantQueue, standardQueue, batchQueue } = require('../../queues/archivist');
 const { PROCESSING_CONFIG, validateArchivistJob } = require('./archivist.utils');
-const { processInstantArchivistJob } = require('./archivist.instant');
-const { processStandardArchivistJob } = require('./archivist.standard');
-const { processBatchArchivistJob } = require('./archivist.batch');
-const { startJobgroupPolling } = require('./archivist.jobgroup.poller');
+const { processInstantArchivistJob } = require('./handlers/archivist.instant');
+const { processStandardArchivistJob } = require('./handlers/archivist.standard');
+const { processBatchArchivistJob } = require('./handlers/archivist.jobgroup');
+const { startJobgroupPolling } = require('./jobgroup/archivist.jobgroup.poller');
 
 let shuttingDown = false;
-
-// In-memory state for standard batching
-let standardBatchCollection = [];
-let standardBatchStartTimeMs = null;
-
-// In-memory state for batch collections (per batch_id)
-const batchCollectionsByBatchId = new Map();
-const batchStartTimesByBatchId = new Map();
 
 /**
  * Helper: sleep for a given number of milliseconds.
@@ -28,88 +20,11 @@ function delay(ms) {
 }
 
 /**
- * Try to flush standard batch if thresholds are reached.
- * Called frequently from the polling loop.
- *
- * @param {import('pino').Logger} logger
- */
-async function maybeFlushStandardBatch(logger) {
-  const now = Date.now();
-
-  if (!standardBatchCollection.length || !standardBatchStartTimeMs) {
-    return;
-  }
-
-  const size = standardBatchCollection.length;
-  const ageMs = now - standardBatchStartTimeMs;
-
-  const { minBatchSize, maxBatchSize, maxWaitTimeMs, cleanupWaitTimeMs } = PROCESSING_CONFIG.standard;
-
-  const hitMaxSize = size >= maxBatchSize;
-  const hitMinAndTimeout = size >= minBatchSize && ageMs >= maxWaitTimeMs;
-  const cleanupTimeout = size > 0 && ageMs >= cleanupWaitTimeMs && size < minBatchSize;
-
-  if (!(hitMaxSize || hitMinAndTimeout || cleanupTimeout)) {
-    return;
-  }
-
-  const jobsToProcess = standardBatchCollection;
-  standardBatchCollection = [];
-  standardBatchStartTimeMs = null;
-
-  logger.info(
-    {
-      batch_size: jobsToProcess.length,
-      reason: hitMaxSize ? 'maxBatchSize' : hitMinAndTimeout ? 'maxWaitTimeMs' : 'cleanupWaitTimeMs',
-    },
-    '[ARCHIVIST] Flushing STANDARD batch'
-  );
-
-  try {
-    await processStandardBatch(logger, jobsToProcess);
-  } catch (err) {
-    logger.error({ err, batch_size: jobsToProcess.length }, '[ARCHIVIST] Error while processing STANDARD batch (placeholder)');
-  }
-}
-
-/**
- * Try to flush batch collections by batch_id based on maxWaitTimeMs.
- *
- * @param {import('pino').Logger} logger
- */
-async function maybeFlushBatchCollections(logger) {
-  const now = Date.now();
-  const { maxWaitTimeMs } = PROCESSING_CONFIG.batch;
-
-  for (const [batchId, jobs] of batchCollectionsByBatchId.entries()) {
-    const startTime = batchStartTimesByBatchId.get(batchId);
-    if (!startTime) continue;
-
-    const ageMs = now - startTime;
-
-    if (ageMs >= maxWaitTimeMs && jobs.length > 0) {
-      logger.info({ batch_id: batchId, job_count: jobs.length }, '[ARCHIVIST] Flushing BATCH group due to maxWaitTimeMs');
-
-      batchCollectionsByBatchId.delete(batchId);
-      batchStartTimesByBatchId.delete(batchId);
-
-      try {
-        await processBatchGroup(logger, batchId, jobs);
-      } catch (err) {
-        logger.error({ err, batch_id: batchId, job_count: jobs.length }, '[ARCHIVIST] Error while processing BATCH group (placeholder)');
-      }
-    }
-  }
-}
-
-/**
  * Main polling loop for the archivist worker.
  * Priority order:
  * 1. INSTANT queue (single job)
  * 2. STANDARD queue (accumulate jobs for batching)
- * 3. BATCH queue (group by batch_id)
- *
- * This replicates the old behavior but with a cleaner architecture.
+ * 3. BATCH queue (jobgroup)
  *
  * @param {import('pino').Logger} logger
  */
@@ -136,7 +51,7 @@ async function startArchivistPollingLoop(logger) {
       logger.error({ err }, '[ARCHIVIST] Error while reading INSTANT queue');
     }
 
-    // 2) STANDARD queue: process one job per loop (placeholder standard)
+    // 2) STANDARD queue: process one job per loop
     try {
       const standardJob = await standardQueue.dequeue();
       if (standardJob) {
@@ -152,7 +67,7 @@ async function startArchivistPollingLoop(logger) {
       logger.error({ err }, '[ARCHIVIST] Error while reading STANDARD queue');
     }
 
-    // 3) BATCH queue: group by batch_id
+    // 3) BATCH queue: jobgroup (OpenAI Batch API)
     try {
       const batchJob = await batchQueue.dequeue();
       if (batchJob) {
@@ -161,7 +76,7 @@ async function startArchivistPollingLoop(logger) {
 
         logger.debug({ tenant_id: batchJob.tenant_id, asset_id: batchJob.asset_id, ai_description_id: batchJob.ai_description_id, batch_id: batchId }, '[ARCHIVIST] Dequeued BATCH job');
 
-        // Directly hand off to batch/jobgroup processor (no accumulation)
+        // Directly hand off to jobgroup processor
         try {
           const workDir = path.join(os.tmpdir(), `archivist-jobgroup-${batchId}-${Date.now()}`);
           await processBatchArchivistJob(logger, { jobs: [batchJob], workDir });
@@ -172,8 +87,6 @@ async function startArchivistPollingLoop(logger) {
     } catch (err) {
       logger.error({ err }, '[ARCHIVIST] Error while reading BATCH queue');
     }
-
-    // Flush functions removed in favor of immediate processing (placeholders)
 
     // If we didn't do any work this loop, sleep a bit to avoid hot spinning
     if (!didWork) {

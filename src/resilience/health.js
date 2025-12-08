@@ -6,7 +6,6 @@ const { getRedisClient } = require('../core/redis');
 const {
   MACHINIST_QUEUE_INSTANT,
   MACHINIST_QUEUE_STANDARD,
-  MACHINIST_QUEUE_JOBGROUP,
   ARCHIVIST_QUEUE_INSTANT,
   ARCHIVIST_QUEUE_STANDARD,
   ARCHIVIST_QUEUE_JOBGROUP,
@@ -24,7 +23,7 @@ async function getWorkerHealth() {
     // Machinist queues
     queueDepths.machinist.instant = await redis.lLen(MACHINIST_QUEUE_INSTANT);
     queueDepths.machinist.standard = await redis.lLen(MACHINIST_QUEUE_STANDARD);
-    queueDepths.machinist.batch = await redis.lLen(MACHINIST_QUEUE_JOBGROUP);
+    // machinist batch queue removed (not implemented)
   } catch (err) {
     redisConnected = false;
   }
